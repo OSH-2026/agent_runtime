@@ -6,6 +6,9 @@ pub enum PlanError {
     MissingNode(NodeId),
     SelfLoop(NodeId),
     Cycle(Vec<NodeId>),
+    DuplicateNode(NodeId),
+    InvalidReference(String),
+    InvalidFormat(String),
 }
 
 impl fmt::Display for PlanError {
@@ -14,6 +17,11 @@ impl fmt::Display for PlanError {
             PlanError::MissingNode(id) => write!(f, "missing node: {id}"),
             PlanError::SelfLoop(id) => write!(f, "self loop on node: {id}"),
             PlanError::Cycle(nodes) => write!(f, "cycle detected: {}", nodes.join(", ")),
+            PlanError::DuplicateNode(id) => write!(f, "duplicate node id: {id}"),
+            PlanError::InvalidReference(reference) => {
+                write!(f, "invalid reference: {reference}")
+            }
+            PlanError::InvalidFormat(message) => write!(f, "invalid format: {message}"),
         }
     }
 }
