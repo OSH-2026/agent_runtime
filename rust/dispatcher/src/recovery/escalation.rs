@@ -14,18 +14,20 @@ pub struct EscalationGuard {
 }
 
 impl EscalationGuard {
-    pub fn next_level(&mut self, node_id: &NodeId) -> RecoveryLevel {
+    pub fn register_failure(&mut self, node_id: &NodeId, retry_budget: u32) -> RecoveryLevel {
         let entry = self.state.entry(node_id.clone()).or_insert(RecoveryState {
             level: RecoveryLevel::Retry,
             retries_used: 0,
         });
-        match entry.level {
-            RecoveryLevel::Retry => {
-                entry.retries_used += 1;
-                RecoveryLevel::Retry
-            }
-            RecoveryLevel::Patch => RecoveryLevel::Patch,
-            RecoveryLevel::Replan => RecoveryLevel::Replan,
+        if entry.level != RecoveryLevel::Retry {
+            return entry.level;
+        }
+        if entry.retries_used < retry_budget {
+            entry.retries_used += 1;
+            RecoveryLevel::Retry
+        } else {
+            entry.level = RecoveryLevel::Patch;
+            RecoveryLevel::Patch
         }
     }
 }

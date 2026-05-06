@@ -18,15 +18,24 @@ impl ActionRegistry {
         self.remote.insert(name.into(), action);
     }
 
-    pub fn get(&self, name: &str) -> Option<ActionHandle<'_>> {
+    pub fn get(&self, name: &str) -> Option<ActionHandle> {
         if let Some(action) = self.local.get(name) {
-            return Some(ActionHandle::Local(action));
+            return Some(ActionHandle::Local(Arc::clone(action)));
         }
-        self.remote.get(name).map(ActionHandle::Remote)
+        self.remote.get(name).cloned().map(ActionHandle::Remote)
     }
 }
 
-pub enum ActionHandle<'a> {
-    Local(&'a Arc<dyn Action>),
-    Remote(&'a RemoteAction),
+pub enum ActionHandle {
+    Local(Arc<dyn Action>),
+    Remote(RemoteAction),
+}
+
+impl ActionHandle {
+    pub async fn execute(&self, input: crate::types::ActionInput) -> crate::types::ActionOutput {
+        match self {
+            ActionHandle::Local(action) => action.execute(input).await,
+            ActionHandle::Remote(action) => action.execute(input).await,
+        }
+    }
 }

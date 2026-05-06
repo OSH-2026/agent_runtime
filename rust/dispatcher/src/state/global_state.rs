@@ -1,5 +1,5 @@
 use crate::plan::{ExecutionPlan, NodeId};
-use crate::state::NodeState;
+use crate::state::{NodeState, Transition};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -25,6 +25,29 @@ impl GlobalState {
         matches!(self.nodes.get(id), Some(NodeState::Ready))
     }
 
+    pub fn refresh_ready(&mut self, plan: &ExecutionPlan) -> Vec<Transition> {
+        let mut transitions = Vec::new();
+        let candidates: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter_map(|(id, state)| {
+                if matches!(state, NodeState::Pending | NodeState::FailedRetryable) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in candidates {
+            if self.all_predecessors_executed(&id, plan) {
+                if let Some(transition) = self.transition(&id, NodeState::Ready) {
+                    transitions.push(transition);
+                }
+            }
+        }
+        transitions
+    }
+
     pub fn all_predecessors_executed(&self, id: &NodeId, plan: &ExecutionPlan) -> bool {
         plan.edges
             .iter()
@@ -38,19 +61,32 @@ impl GlobalState {
         }
     }
 
-    pub fn mark_running(&mut self, id: &NodeId) {
-        self.set_state(id, NodeState::Running);
+    pub fn transition(&mut self, id: &NodeId, state: NodeState) -> Option<Transition> {
+        let from = self.nodes.get(id).copied()?;
+        if from == state {
+            return None;
+        }
+        self.nodes.insert(id.clone(), state);
+        Some(Transition {
+            node_id: id.clone(),
+            from,
+            to: state,
+        })
     }
 
-    pub fn mark_executed(&mut self, id: &NodeId) {
-        self.set_state(id, NodeState::Executed);
+    pub fn mark_running(&mut self, id: &NodeId) -> Option<Transition> {
+        self.transition(id, NodeState::Running)
     }
 
-    pub fn mark_retryable(&mut self, id: &NodeId) {
-        self.set_state(id, NodeState::FailedRetryable);
+    pub fn mark_executed(&mut self, id: &NodeId) -> Option<Transition> {
+        self.transition(id, NodeState::Executed)
     }
 
-    pub fn mark_failed(&mut self, id: &NodeId) {
-        self.set_state(id, NodeState::Failed);
+    pub fn mark_retryable(&mut self, id: &NodeId) -> Option<Transition> {
+        self.transition(id, NodeState::FailedRetryable)
+    }
+
+    pub fn mark_failed(&mut self, id: &NodeId) -> Option<Transition> {
+        self.transition(id, NodeState::Failed)
     }
 }

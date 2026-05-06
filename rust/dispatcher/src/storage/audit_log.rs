@@ -1,5 +1,6 @@
 use crate::plan::NodeId;
 use crate::state::NodeState;
+use std::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
@@ -11,4 +12,37 @@ pub struct AuditEvent {
 
 pub trait AuditLog: Send + Sync {
     fn record(&mut self, event: AuditEvent);
+}
+
+pub struct InMemoryAuditLog {
+    events: Mutex<Vec<AuditEvent>>,
+}
+
+impl InMemoryAuditLog {
+    pub fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn events(&self) -> Vec<AuditEvent> {
+        self.events
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl Default for InMemoryAuditLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AuditLog for InMemoryAuditLog {
+    fn record(&mut self, event: AuditEvent) {
+        if let Ok(mut guard) = self.events.lock() {
+            guard.push(event);
+        }
+    }
 }

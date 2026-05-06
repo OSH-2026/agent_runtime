@@ -1,5 +1,6 @@
 use crate::executor::ExecutionResult;
-use crate::plan::NodeId;
+use crate::plan::{ExecutionPlan, NodeId};
+use crate::runtime::DiagnosticContext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryLevel {
@@ -15,5 +16,10 @@ pub struct RecoveryAction {
 }
 
 pub trait RecoveryStrategy: Send + Sync {
-    fn handle_failure(&self, result: &ExecutionResult) -> RecoveryAction;
+    fn handle_failure(
+        &mut self,
+        result: &ExecutionResult,
+        plan: &ExecutionPlan,
+        diagnostic: &mut DiagnosticContext,
+    ) -> RecoveryAction;
 }

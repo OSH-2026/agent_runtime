@@ -5,9 +5,9 @@ pub mod protocol;
 pub mod types;
 
 pub use registry::ActionRegistry;
+pub use types::{ActionError, ActionInput, ActionOutput, ActionRequest, ActionResponse};
 
 use async_trait::async_trait;
-use types::{ActionInput, ActionOutput};
 
 #[async_trait]
 pub trait Action: Send + Sync {

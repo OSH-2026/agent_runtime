@@ -5,6 +5,7 @@ use std::fmt;
 pub enum PlanError {
     MissingNode(NodeId),
     SelfLoop(NodeId),
+    Cycle(Vec<NodeId>),
 }
 
 impl fmt::Display for PlanError {
@@ -12,6 +13,7 @@ impl fmt::Display for PlanError {
         match self {
             PlanError::MissingNode(id) => write!(f, "missing node: {id}"),
             PlanError::SelfLoop(id) => write!(f, "self loop on node: {id}"),
+            PlanError::Cycle(nodes) => write!(f, "cycle detected: {}", nodes.join(", ")),
         }
     }
 }
@@ -28,5 +30,11 @@ impl fmt::Display for DispatcherError {
             DispatcherError::Plan(err) => write!(f, "plan error: {err}"),
             DispatcherError::Execution(message) => write!(f, "execution error: {message}"),
         }
+    }
+}
+
+impl From<PlanError> for DispatcherError {
+    fn from(value: PlanError) -> Self {
+        DispatcherError::Plan(value)
     }
 }
