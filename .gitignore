@@ -1,3 +1,6 @@
 **/.DS_Store
 rust/**/target
 kotlin/**/.gradle
+kotlin/**/build
+examples/android-action-runtime/**/.gradle
+examples/android-action-runtime/**/build
