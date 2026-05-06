@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package actions;
+
+service ActionService {
+  rpc Execute (ActionRequest) returns (ActionResponse);
+}
+
+message ActionRequest {
+  string action_name = 1;
+  bytes payload = 2;
+}
+
+message ActionResponse {
+  bytes result = 1;
+  string error = 2;
+}

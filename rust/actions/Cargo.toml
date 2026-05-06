@@ -3,4 +3,8 @@ name = "actions"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
+async-trait = "0.1"
