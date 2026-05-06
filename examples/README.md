@@ -1,4 +1,4 @@
-# examples
+# 示例
 
-- android-action-runtime: Android app example that runs the Kotlin action runtime as a foreground service.
-- dispatcher_demo: Rust example that runs the dispatcher with a local echo action.
+- android-action-runtime：Android 应用示例，在前台服务中运行 Kotlin Action Runtime。
+- dispatcher_demo：Rust 示例，运行 dispatcher 并使用本地 echo action 验证 DAG 调度。
