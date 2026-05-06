@@ -18,35 +18,105 @@
 
 ## 2. 技术依据
 
-在工程实现层面，Action Fabric 的可行性建立在现有 Agent 系统实践与图调度技术的交叉基础之上。现有系统虽然广泛采用 tool calling 机制来增强模型的执行能力，但该机制本质上仍停留在函数调用层面，其主要作用是为模型提供外部能力接口，而非构建完整的执行语义。不同工具之间缺乏统一的语义描述，其调用顺序与组合方式完全依赖模型推理，这使得系统在复杂任务中难以进行有效调度。
+在工程实现层面，Action Fabric 已经落地为两层 Rust crate 的骨架：`dispatcher` 负责调度内核与恢复机制，`actions` 负责 Action 抽象与 Rust↔Kotlin 的执行桥。该实现将论文中的 ready set、状态机、三层分离与有界恢复直接映射到模块结构与核心类型上，便于后续扩展与替换。
 
-Action Fabric 的关键技术路径在于，将工具调用提升为“结构化动作”，并赋予其完整的执行语义。在这一框架中，一个 Action 不再仅仅是函数调用，而是一个具备输入输出约束、执行条件以及语义描述的执行单元。这种抽象使得系统可以在不依赖模型推理的情况下，对执行过程进行分析与控制。尤其是在多个 Action 之间，通过参数引用与数据依赖关系，可以显式构建任务执行图，从而为后续调度提供基础。在这一方面，Action Fabric 的设计并非完全孤立，而是可以在已有软件系统中找到现实映射。其中最具代表性的实例是 Apple Shortcuts（其前身为 Workflow）。该系统通过“动作（Action）”作为基本执行单元，将用户任务表示为一系列可组合的操作，并支持参数传递与条件控制。从结构上看，一个快捷指令本质上即为一个执行图，其节点为动作，边表示数据流与执行顺序。这种设计与 Action Fabric 的核心思想高度一致，即通过统一动作抽象与显式结构表示，实现复杂任务的自动化执行。
+结构化 Action 的实现方式如下：执行单元以 Action trait 表达，输入输出采用二进制 payload，便于跨语言序列化。Rust 侧可以直接执行本地 Action，也可通过 RemoteAction 转发到 Kotlin 侧服务，实现异步执行与跨进程隔离。
 
-在任务表示层面，Action Fabric 采用 DAG 作为核心结构。这一选择具有明确的工程依据。首先，DAG 能够精确表达任务之间的依赖关系，使得执行顺序由结构决定，而非由模型记忆决定。其次，DAG 支持并行执行，即当多个节点的依赖均满足时，可以同时调度执行，从而显著提升系统吞吐能力。Action Fabric 调研报告中的示例表明，在一个典型的代码修复任务中，原本需要约 11 个串行步骤的执行过程，在 DAG 调度下可以压缩为约 6 个调度轮次，这一差异直接来源于并发执行能力的引入。
+```rust
+#[async_trait]
+pub trait Action: Send + Sync {
+  async fn execute(&self, input: ActionInput) -> ActionOutput;
+}
 
-从调度机制来看，Action Fabric 的执行过程可以被描述为一个状态驱动系统。调度器在每一轮根据当前节点状态计算就绪集合，并触发执行。与 Agent Loop 中由模型逐步决定下一步操作不同，这一机制将执行控制权从模型转移到系统层，使得执行行为具有确定性与可预测性。研究 ([arXiv, Apr 2026](https://arxiv.org/abs/2604.11378?utm_source=chatgpt.com)) 指出，这种显式调度策略的引入，是实现系统可验证性与可分析性的关键。
+pub struct ActionInput {
+  pub payload: Vec<u8>,
+}
 
-在错误处理方面，*From Agent Loops to Structured Graphs* ([arXiv, Apr 2026](https://arxiv.org/abs/2604.11378?utm_source=chatgpt.com)) 提出的分层恢复机制为 Action Fabric 提供了重要技术依据。该机制将恢复过程划分为多个层级，并通过逐级升级的方式限制重试行为，从而避免无界循环。这一设计特别适用于 LLM 节点的非确定性特性，因为在实际执行中，相同输入可能产生不同输出，而简单重试并不能保证问题解决。通过结构化恢复策略，可以在一定程度上控制执行成本并提升系统稳定性。
+pub struct ActionOutput {
+  pub payload: Vec<u8>,
+  pub error: Option<String>,
+}
+```
 
-此外，DAG 结构还支持执行结果的复用与增量恢复。当某一节点执行失败时，仅需重新执行受影响的子图，而无需重跑整个流程。这一特性在复杂任务中具有重要意义，因为它能够显著降低失败成本，并提升系统整体效率。相比之下，Agent Loop 在发生错误时往往需要重新生成上下文，导致重复计算与资源浪费。
+调度侧采用 DAG + 状态驱动引擎。节点状态机显式建模，ready set 由依赖与状态共同决定，执行引擎仅做“计算就绪集合→分发→应用状态转移”的确定性循环。
 
-需要强调的是，Action Fabric 的技术实现并未脱离现有技术体系，而是在其基础上的结构性整合与提升。图调度技术在传统工作流系统中已得到广泛应用，而 LLM Agent 系统中的 tool calling 机制也为动作执行提供了基础能力。Action Fabric 的创新之处在于，将这两者在统一语义框架下结合，从而构建出一个既具备表达能力又具备执行能力的系统。
+```rust
+pub enum NodeState {
+  Pending,
+  Ready,
+  Running,
+  WaitingHuman,
+  Blocked,
+  Executed,
+  FailedRetryable,
+  Failed,
+  Cancelled,
+  Skipped,
+}
 
-在更广泛的工程背景下，DAG 调度作为一种成熟的执行范式，已经在多个系统中得到验证。例如，Apache Airflow、Luigi 以及 Prefect 等工作流引擎，均采用静态或半静态 DAG 来描述任务依赖，并通过拓扑排序或列表调度算法实现执行。这些系统的成功实践表明，在依赖关系明确的任务场景中，DAG 调度能够提供良好的可控性与可扩展性。然而，这类系统的节点通常是确定性程序，其执行结果可预测，而在 LLM Agent 场景中，节点行为具有显著的非确定性，这正是 Action Fabric 所需要解决的关键差异。
+pub fn compute_ready_set(state: &GlobalState, plan: &ExecutionPlan) -> Vec<NodeId> {
+  plan.nodes
+    .keys()
+    .filter(|id| state.is_ready(id) && state.all_predecessors_executed(id, plan))
+    .cloned()
+    .collect()
+}
+```
 
-在 LLM Agent 领域，近年来也出现了一系列图结构执行框架。例如 LangGraph 将 Agent 工作流建模为带状态通道的图结构，支持并行节点执行与条件分支；AutoGen 和 CrewAI 虽然提供多 Agent 协作能力，但其执行本质仍然依赖对话驱动，缺乏显式调度语义；Semantic Kernel 则通过技能（skill）组合实现一定程度的结构化执行。这些系统从不同角度探索了结构化执行路径，但普遍存在执行控制不完全显式、恢复机制缺乏约束等问题。
+执行引擎采用调度策略接口（默认 TopoPolicy），支持确定性“全就绪并发”。Recovery 层独立于执行上下文，仅接收失败记录并按层级升级，形成有界恢复链。
 
-进一步的研究如 GPTSwarm、AFlow 等系统，则尝试将 Agent 工作流表示为可优化的图结构，通过搜索或学习方法改进执行路径。这些工作验证了“图结构优于序列结构”的基本结论，但在执行语义与调度策略方面仍然保持较高自由度，缺乏统一约束。相比之下，Action Fabric 更强调结构约束与执行确定性，其技术路径更接近于将 DAG 调度从“工作流工具”提升为“执行语义核心”。
+```rust
+pub struct Engine {
+  pub plan: ExecutionPlan,
+  pub state: GlobalState,
+  pub dispatcher: Dispatcher,
+  pub executor: Box<dyn Executor>,
+  pub recovery: Box<dyn RecoveryStrategy>,
+}
 
-在具体工程实现层面，为了保证调度系统在并发执行、状态管理以及错误恢复方面的可靠性与性能，Action Fabric 的执行引擎可以采用 Rust 作为核心实现语言。这一选择并非偶然，而是基于调度系统本身对性能、并发安全与可预测性的高要求。DAG 调度器在运行过程中需要频繁进行状态更新、就绪集合计算以及多任务调度，如果依赖具有垃圾回收机制或运行时不可控的语言，容易在高负载场景下引入额外延迟与不确定性。而 Rust 通过其所有权模型与编译期借用检查机制，在无需运行时开销的前提下提供内存安全保证，使得调度器能够在保持高性能的同时避免数据竞争与内存错误，这对于执行系统而言具有基础性意义。
+pub async fn run(&mut self, context: &ExecutionContext) {
+  loop {
+    let ready = compute_ready_set(&self.state, &self.plan);
+    if ready.is_empty() {
+      break;
+    }
+    let to_run = self.dispatcher.dispatch_ready(ready);
+    let results = self.executor.execute_batch(to_run, context).await;
+    for result in results {
+      self.apply_transition(result);
+    }
+  }
+}
+```
 
-进一步而言，Action Fabric 中的并发执行本质上可以映射为多任务调度问题，涉及线程池管理、异步任务调度以及状态同步等关键技术。Rust 在这一领域提供了成熟的异步生态（如基于 futures 的调度模型），能够以较低开销支持大规模并发执行。同时，其零成本抽象特性使得高层调度逻辑可以在不牺牲性能的情况下进行表达，这对于需要同时处理大量 Action 节点的系统尤为重要。因此，从工程角度来看，Rust 不仅能够满足系统性能需求，还能够在类型系统层面约束执行逻辑，从而降低复杂系统中的错误率。
+跨语言桥接采用 gRPC/IPC 协议，Kotlin 端暴露 ActionService，Rust 端以 GrpcClient 调用。该方案保证接口稳定、进程隔离与异步执行能力，是当前阶段最稳妥的技术选型。
 
-在移动端集成方面，考虑到 Action Fabric 作为执行引擎需要具备跨平台能力，可以借助 Android NDK 所提供的原生接口，将 Rust 编译为可在 Android 环境运行的动态库。Rust 社区提供的 ndk crate 为这一过程提供了直接支持，使得 Rust 编写的调度引擎能够与 Android 系统 API 进行交互。这一技术路径的优势在于，可以在保持核心执行引擎统一的前提下，实现移动端部署，从而验证 Action Fabric 在真实设备环境中的执行能力。与传统通过 Java/Kotlin 重写逻辑的方式相比，这种方案能够避免重复实现调度逻辑，同时保证行为一致性。
+```proto
+service ActionService {
+  rpc Execute (ActionRequest) returns (ActionResponse);
+}
 
-在用户界面与演示系统方面，可以采用 Tauri 构建跨平台 Demo 应用。Tauri 的核心特点在于其前端使用 Web 技术栈，而后端逻辑由 Rust 提供，这与 Action Fabric 的架构天然契合。调度引擎可以作为 Tauri 后端的一部分运行，而前端则负责可视化任务图、展示执行状态以及提供用户交互界面。相比传统 Electron 框架，Tauri 在资源占用与安全性方面具有明显优势，其轻量级设计使得 Demo 系统可以在较低开销下运行，同时 Rust 后端也能够保证核心执行逻辑的安全性与稳定性。
+message ActionRequest {
+  string action_name = 1;
+  bytes payload = 2;
+}
 
-从整体技术栈来看，这一组合形成了一个具有一致性的系统架构：Rust 作为执行核心，提供高性能与安全保障；NDK 与 ndk crate 作为桥梁，使核心引擎能够扩展至移动端环境；Tauri 则作为展示层，实现跨平台交互界面。这种设计避免了多语言实现带来的复杂性，使系统在不同平台上保持一致行为，同时也降低了工程维护成本。更重要的是，这一技术路径与 Action Fabric 的核心理念高度一致，即将执行控制从高层逻辑中剥离，并下沉到一个稳定、可控的系统层。在该架构中，LLM 仅负责生成任务结构，而具体执行由 Rust 调度引擎完成，从而形成清晰的职责分离。这种分离不仅提升了系统的可控性，也为后续性能优化与系统扩展提供了基础。
+message ActionResponse {
+  bytes result = 1;
+  string error = 2;
+}
+```
+
+Action 注册表将本地与远程 Action 统一到同一入口，调度器只需持有 Action 名称即可选择执行路径，避免执行层知晓跨语言细节。
+
+```rust
+pub struct ActionRegistry {
+  local: HashMap<String, Arc<dyn Action>>,
+  remote: HashMap<String, RemoteAction>,
+}
+```
+
+从技术选型角度看，该实现体现了三点：一是调度内核使用 Rust 保证高并发与内存安全；二是执行抽象与恢复逻辑显式分层，降低运行时不确定性；三是跨语言执行通过 gRPC 保障可维护性与演进空间。这些选择与 Action Fabric 的设计原则一致，使其具备可验证、可扩展、可替换的工程基础。
 
 ## 3. 创新点
 
