@@ -20,8 +20,8 @@ kotlin/
 
 ## 构建与使用
 
-- 构建 Android library：
-	- 在 kotlin-actions-runtime 目录执行 `./gradlew assemble`
+- 构建 Android library：模块使用 Groovy `build.gradle`（含 Protobuf/gRPC 代码生成）。推荐在仓库内通过示例工程构建，例如  
+  `examples/android-action-runtime` 下执行 `./gradlew :runtime:assembleDebug`（需 JDK 17+ 与 Android SDK）。
 - 运行 gRPC 服务端：
 	- 通过 `ActionRuntimeService` 启动前台服务（见 runtime/ActionRuntimeService.kt）
 
