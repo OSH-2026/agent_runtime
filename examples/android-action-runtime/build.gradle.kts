@@ -1,4 +1,5 @@
 plugins {
-    id("com.android.application") version "8.4.2" apply false
-    kotlin("android") version "1.9.24" apply false
+    id("com.android.application") apply false
+    kotlin("android") apply false
+    kotlin("plugin.serialization") apply false
 }

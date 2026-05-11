@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Action Runtime</string>
+    <string name="log_hint">Smoke test: same path as gRPC — ActionExecutor + JsonCodec + ActionRequest.\n</string>
+    <string name="btn_request_permissions">Request notifications + location</string>
+    <string name="btn_start_grpc_service">Start gRPC service (foreground)</string>
+    <string name="btn_stop_grpc_service">Stop gRPC service</string>
+    <string name="btn_run_device_info">Run: device_info</string>
+    <string name="btn_run_network_status">Run: network_status</string>
+    <string name="btn_run_power_status">Run: power_status</string>
+    <string name="btn_run_storage_info">Run: storage_info</string>
+    <string name="btn_run_get_location">Run: get_location</string>
+    <string name="btn_run_foreground_app">Run: foreground_app</string>
+    <string name="btn_run_check_permissions">Run: check_permissions</string>
+    <string name="btn_run_read_file">Run: read_file (filesDir)</string>
+    <string name="btn_run_http_call">Run: http_call (example.com)</string>
 </resources>
