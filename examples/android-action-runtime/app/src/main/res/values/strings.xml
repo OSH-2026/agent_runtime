@@ -13,4 +13,6 @@
     <string name="btn_run_check_permissions">Run: check_permissions</string>
     <string name="btn_run_read_file">Run: read_file (filesDir)</string>
     <string name="btn_run_http_call">Run: http_call (example.com)</string>
+    <string name="section_intent_actions">Android Intent actions (cross-app)</string>
+    <string name="btn_show_audit_log">Show action audit log</string>
 </resources>

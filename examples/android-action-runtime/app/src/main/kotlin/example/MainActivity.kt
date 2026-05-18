@@ -3,7 +3,9 @@ package example
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,7 +33,10 @@ import actions.ReadFileInput
 import actions.ReadFileOutput
 import actions.StorageInfoInput
 import actions.StorageInfoOutput
+import actions.IntentActivityResult
+import actions.LaunchResult
 import example.runtime.R
+import runtime.ActionAuditLogHolder
 import runtime.ActionExecutor
 import runtime.ActionRuntimeService
 import transport.serialization.JsonCodec
@@ -67,7 +72,7 @@ class MainActivity : ComponentActivity() {
             val permissions = buildList {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
                 add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     add(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }.toTypedArray()
@@ -215,6 +220,60 @@ class MainActivity : ComponentActivity() {
                     "FAIL http_call: ${resp.error}"
                 }
             }
+        }
+
+        setupIntentSmokeButtons()
+        findViewById<Button>(R.id.btnShowAudit).setOnClickListener {
+            val lines = ActionAuditLogHolder.log.snapshot(20).joinToString("\n") { record ->
+                "${record.timestampMs} ${record.actionName} success=${record.success} err=${record.errorCode}"
+            }
+            appendLog(if (lines.isBlank()) "audit log is empty" else lines)
+        }
+    }
+
+    private fun setupIntentSmokeButtons() {
+        val container = findViewById<LinearLayout>(R.id.intentButtonContainer)
+        buildIntentSmokeCases(codec).forEach { smokeCase ->
+            val button = Button(this).apply {
+                text = smokeCase.label
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            }
+            button.setOnClickListener {
+                runActionSmoke(smokeCase.actionName, smokeCase.payload)
+            }
+            container.addView(button)
+        }
+    }
+
+    private fun runActionSmoke(actionName: String, payload: ByteArray) {
+        runSmoke(actionName) {
+            val resp = executor.execute(request(actionName, payload))
+            if (resp.success && resp.result != null) {
+                "OK $actionName: ${formatActionResult(actionName, resp.result!!)}"
+            } else {
+                "FAIL $actionName: ${resp.error}"
+            }
+        }
+    }
+
+    private fun formatActionResult(actionName: String, bytes: ByteArray): String {
+        val needsResult = actionName.contains("capture") ||
+            actionName.contains("pick") ||
+            actionName.contains("get_content") ||
+            actionName.contains("open_document")
+        return try {
+            if (needsResult) {
+                val out = codec.decode(bytes, serializer<IntentActivityResult>())
+                "resultCode=${out.resultCode} uri=${out.dataUri} ${out.message}"
+            } else {
+                val out = codec.decode(bytes, serializer<LaunchResult>())
+                "launched=${out.launched} pkg=${out.resolvedPackage} ${out.message}"
+            }
+        } catch (_: Exception) {
+            bytes.decodeToString()
         }
     }
 

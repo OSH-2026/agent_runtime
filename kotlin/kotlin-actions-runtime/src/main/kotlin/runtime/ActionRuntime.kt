@@ -27,6 +27,7 @@ import actions.ReadFileOutput
 import actions.StorageInfoAction
 import actions.StorageInfoInput
 import actions.StorageInfoOutput
+import actions.registerIntentActions
 import android.content.Context
 import kotlinx.serialization.serializer
 import transport.grpc.ActionServiceImpl
@@ -98,8 +99,11 @@ class ActionRuntime(
             serializer<HttpRequest>(),
             serializer<HttpResponse>(),
         )
+        registry.registerIntentActions()
         return this
     }
+
+    fun auditSnapshot(limit: Int = 50) = ActionAuditLogHolder.log.snapshot(limit)
 
     fun start() {
         val executor = ActionExecutor(appContext, registry, codec)

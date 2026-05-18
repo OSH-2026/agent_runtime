@@ -24,10 +24,14 @@ class ActionExecutor(
                 requestId = req.metadata["requestId"] ?: "",
                 nodeId = req.metadata["nodeId"] ?: "",
                 deadline = System.currentTimeMillis() + 30_000,
-                metadata = req.metadata,
+                metadata = req.metadata + ("actionName" to req.actionName),
             )
             val timeoutMs = (ctx.deadline - System.currentTimeMillis()).coerceAtLeast(0)
-            val result = runWithMiddleware(ctx) {
+            val layers = middleware + AuditMiddleware(
+                auditLog = ActionAuditLogHolder.log,
+                actionNameProvider = { _ -> req.actionName },
+            )
+            val result = runWithMiddleware(ctx, layers) {
                 withTimeout(timeoutMs) {
                     typedSpec.action.execute(input, ctx)
                 }
@@ -44,9 +48,13 @@ class ActionExecutor(
         }
     }
 
-    private suspend fun <T> runWithMiddleware(ctx: ActionContext, block: suspend () -> T): T {
+    private suspend fun <T> runWithMiddleware(
+        ctx: ActionContext,
+        layers: List<Middleware>,
+        block: suspend () -> T,
+    ): T {
         var next = block
-        middleware.reversed().forEach { layer ->
+        layers.reversed().forEach { layer ->
             val current = next
             next = { layer.intercept(ctx, current) }
         }

@@ -27,6 +27,7 @@ import actions.ReadFileOutput
 import actions.StorageInfoAction
 import actions.StorageInfoInput
 import actions.StorageInfoOutput
+import actions.registerIntentActions
 import kotlinx.serialization.serializer
 import runtime.ActionRegistry
 
@@ -90,5 +91,6 @@ fun buildSmokeActionRegistry(): ActionRegistry {
             serializer<HttpRequest>(),
             serializer<HttpResponse>(),
         )
+        registerIntentActions()
     }
 }

@@ -5,5 +5,6 @@ enum class ErrorCode {
     PERMISSION,
     TIMEOUT,
     VALIDATION,
+    UNAVAILABLE,
     INTERNAL,
 }

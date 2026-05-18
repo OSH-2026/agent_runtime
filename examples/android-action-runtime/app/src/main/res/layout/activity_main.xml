@@ -92,5 +92,25 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/btn_run_http_call" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/section_intent_actions"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/intentButtonContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <Button
+            android:id="@+id/btnShowAudit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/btn_show_audit_log" />
     </LinearLayout>
 </ScrollView>
