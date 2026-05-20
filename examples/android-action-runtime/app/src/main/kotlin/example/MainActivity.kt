@@ -1,7 +1,6 @@
 package example
 
 import android.Manifest
-import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
@@ -33,8 +32,6 @@ import actions.ReadFileInput
 import actions.ReadFileOutput
 import actions.StorageInfoInput
 import actions.StorageInfoOutput
-import actions.IntentActivityResult
-import actions.LaunchResult
 import example.runtime.R
 import runtime.ActionAuditLogHolder
 import runtime.ActionExecutor
@@ -69,14 +66,8 @@ class MainActivity : ComponentActivity() {
         resultText = findViewById(R.id.resultText)
 
         findViewById<Button>(R.id.btnRequestPermissions).setOnClickListener {
-            val permissions = buildList {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-                add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    add(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }.toTypedArray()
-            permissionLauncher.launch(permissions)
+            SmokePermissionHelper.requestAllRuntimePermissions(permissionLauncher)
+            SmokePermissionHelper.openSpecialSettings(this)
         }
 
         findViewById<Button>(R.id.btnStartService).setOnClickListener {
@@ -177,10 +168,7 @@ class MainActivity : ComponentActivity() {
         findViewById<Button>(R.id.btnCheckPermissions).setOnClickListener {
             runSmoke("check_permissions") {
                 val input = PermissionStatusInput(
-                    permissions = listOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.POST_NOTIFICATIONS,
-                    ),
+                    permissions = SmokePermissionHelper.runtimePermissionNames(),
                 )
                 val payload = codec.encode(input, serializer<PermissionStatusInput>())
                 val resp = executor.execute(request("check_permissions", payload))
@@ -222,12 +210,30 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        setupBackgroundSmokeButtons()
         setupIntentSmokeButtons()
         findViewById<Button>(R.id.btnShowAudit).setOnClickListener {
             val lines = ActionAuditLogHolder.log.snapshot(20).joinToString("\n") { record ->
                 "${record.timestampMs} ${record.actionName} success=${record.success} err=${record.errorCode}"
             }
             appendLog(if (lines.isBlank()) "audit log is empty" else lines)
+        }
+    }
+
+    private fun setupBackgroundSmokeButtons() {
+        val container = findViewById<LinearLayout>(R.id.backgroundButtonContainer)
+        buildBackgroundSmokeCases(codec, smokeTestFile.absolutePath).forEach { smokeCase ->
+            val button = Button(this).apply {
+                text = smokeCase.label
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            }
+            button.setOnClickListener {
+                runActionSmoke(smokeCase.actionName, smokeCase.payload)
+            }
+            container.addView(button)
         }
     }
 
@@ -260,21 +266,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun formatActionResult(actionName: String, bytes: ByteArray): String {
-        val needsResult = actionName.contains("capture") ||
-            actionName.contains("pick") ||
-            actionName.contains("get_content") ||
-            actionName.contains("open_document")
-        return try {
-            if (needsResult) {
-                val out = codec.decode(bytes, serializer<IntentActivityResult>())
-                "resultCode=${out.resultCode} uri=${out.dataUri} ${out.message}"
-            } else {
-                val out = codec.decode(bytes, serializer<LaunchResult>())
-                "launched=${out.launched} pkg=${out.resolvedPackage} ${out.message}"
-            }
-        } catch (_: Exception) {
-            bytes.decodeToString()
-        }
+        return SmokeResultFormatter.format(codec, actionName, bytes)
     }
 
     private fun request(actionName: String, payload: ByteArray): ActionRequest {

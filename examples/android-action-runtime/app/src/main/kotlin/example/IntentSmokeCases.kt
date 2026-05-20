@@ -77,7 +77,7 @@ fun buildIntentSmokeCases(codec: JsonCodec, nowMs: Long = System.currentTimeMill
 private inline fun <reified T> case(codec: JsonCodec, actionName: String, input: T): IntentSmokeCase {
     return IntentSmokeCase(
         actionName = actionName,
-        label = actionName,
+        label = "[intent] $actionName",
         payload = codec.encode(input, serializer()),
     )
 }

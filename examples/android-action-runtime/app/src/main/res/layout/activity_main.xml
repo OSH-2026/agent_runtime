@@ -97,6 +97,19 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
+            android:text="@string/section_background_actions"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/backgroundButtonContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
             android:text="@string/section_intent_actions"
             android:textStyle="bold" />
 
