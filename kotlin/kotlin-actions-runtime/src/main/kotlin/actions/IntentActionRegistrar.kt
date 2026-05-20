@@ -4,14 +4,14 @@ import kotlinx.serialization.serializer
 import runtime.ActionRegistry
 
 fun ActionRegistry.registerIntentActions() {
-    register("intent_set_alarm", SetAlarmAction(), serializer<SetAlarmInput>(), serializer<LaunchResult>())
-    register("intent_set_timer", SetTimerAction(), serializer<SetTimerInput>(), serializer<LaunchResult>())
-    register("intent_show_alarms", ShowAlarmsAction(), serializer<ShowAlarmsInput>(), serializer<LaunchResult>())
+    register("intent_set_alarm", SetAlarmAction(), serializer<SetAlarmInput>(), serializer<SetAlarmOutput>())
+    register("intent_set_timer", SetTimerAction(), serializer<SetTimerInput>(), serializer<SetTimerOutput>())
+    register("intent_show_alarms", ShowAlarmsAction(), serializer<ShowAlarmsInput>(), serializer<AlarmListOutput>())
     register(
         "intent_insert_calendar",
         InsertCalendarEventAction(),
         serializer<InsertCalendarEventInput>(),
-        serializer<LaunchResult>(),
+        serializer<InsertCalendarEventOutput>(),
     )
     register(
         "intent_capture_return",
@@ -19,8 +19,8 @@ fun ActionRegistry.registerIntentActions() {
         serializer<CaptureImageReturnInput>(),
         serializer<IntentActivityResult>(),
     )
-    register("intent_camera_still", CameraStillAction(), serializer<CameraStillInput>(), serializer<LaunchResult>())
-    register("intent_camera_video", CameraVideoAction(), serializer<CameraVideoInput>(), serializer<LaunchResult>())
+    register("intent_camera_still", CameraStillAction(), serializer<CameraStillInput>(), serializer<TakePhotoOutput>())
+    register("intent_camera_video", CameraVideoAction(), serializer<CameraVideoInput>(), serializer<RecordVideoOutput>())
     register(
         "intent_pick_contact",
         PickContactAction(),
