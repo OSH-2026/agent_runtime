@@ -75,19 +75,19 @@ fun ActionRegistry.registerBuiltinActions() {
         "set_alarm",
         SetAlarmAction(),
         serializer<SetAlarmInput>(),
-        serializer<SetAlarmOutput>(),
+        serializer<LaunchResult>(),
     )
     register(
         "set_timer",
         SetTimerAction(),
         serializer<SetTimerInput>(),
-        serializer<SetTimerOutput>(),
+        serializer<LaunchResult>(),
     )
     register(
         "list_alarms",
         ShowAlarmsAction(),
         serializer<ShowAlarmsInput>(),
-        serializer<AlarmListOutput>(),
+        serializer<LaunchResult>(),
     )
     register(
         "read_sms",

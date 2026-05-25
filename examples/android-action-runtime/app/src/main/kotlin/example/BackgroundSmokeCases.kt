@@ -8,7 +8,6 @@ import actions.FileSearchInput
 import actions.ForegroundAppInput
 import actions.HttpRequest
 import actions.InsertCalendarEventInput
-import actions.LaunchAppInput
 import actions.ListCalendarEventsInput
 import actions.ListInstalledAppsInput
 import actions.ListNotificationsInput
@@ -23,16 +22,13 @@ import actions.ReadFileInput
 import actions.ReadSmsInput
 import actions.RecordAudioInput
 import actions.RecordVideoInput
-import actions.ScreenRecordInput
 import actions.ScreenshotInput
 import actions.SearchContactsInput
-import actions.SelectFileInput
 import actions.SendSmsInput
 import actions.SetAlarmInput
 import actions.SetSilentModeInput
 import actions.SetTimerInput
 import actions.SetVolumeInput
-import actions.ShowAlarmsInput
 import actions.StorageInfoInput
 import actions.SystemInfoInput
 import actions.TakePhotoInput
@@ -64,10 +60,8 @@ fun buildBackgroundSmokeCases(
         bg(codec, "get_location", LocationInput()),
         bg(codec, "foreground_app", ForegroundAppInput()),
         bg(codec, "list_installed_apps", ListInstalledAppsInput(includeSystemApps = false)),
-        bg(codec, "launch_app", LaunchAppInput(packageName = "com.android.settings")),
-        bg(codec, "set_alarm", SetAlarmInput(hour = 8, minutes = 0)),
-        bg(codec, "set_timer", SetTimerInput(lengthSeconds = 60)),
-        bg(codec, "list_alarms", ShowAlarmsInput()),
+        bg(codec, "set_alarm", SetAlarmInput(hour = 8, minutes = 0, skipUi = true)),
+        bg(codec, "set_timer", SetTimerInput(lengthSeconds = 60, skipUi = true)),
         bg(codec, "read_sms", ReadSmsInput(limit = 5)),
         bg(codec, "send_sms", SendSmsInput(address = "5550000000", body = "smoke-test-do-not-send")),
         bg(codec, "read_call_log", ReadCallLogInput(limit = 5)),
@@ -81,12 +75,10 @@ fun buildBackgroundSmokeCases(
         bg(codec, "media_play_pause", MediaPlayPauseInput(action = "toggle")),
         bg(codec, "media_now_playing", NowPlayingInput()),
         bg(codec, "screenshot", ScreenshotInput(timeoutMs = 5_000)),
-        bg(codec, "screen_record", ScreenRecordInput(durationSeconds = 3, withAudio = false)),
         bg(codec, "take_photo", TakePhotoInput(lens = "back")),
         bg(codec, "record_video", RecordVideoInput(durationSeconds = 3, withAudio = false)),
         bg(codec, "record_audio", RecordAudioInput(durationSeconds = 3)),
         bg(codec, "open_webpage", OpenWebPageInput(url = "https://example.com", timeoutMs = 8_000)),
-        bg(codec, "select_file", SelectFileInput()),
         bg(codec, "search_files", FileSearchInput(query = "smoke", limit = 10)),
         bg(
             codec,

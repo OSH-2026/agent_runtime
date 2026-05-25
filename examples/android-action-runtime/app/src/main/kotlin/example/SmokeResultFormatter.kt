@@ -1,6 +1,5 @@
 package example
 
-import actions.AlarmListOutput
 import actions.BluetoothToggleOutput
 import actions.ClipboardCopyOutput
 import actions.ClipboardReadOutput
@@ -32,9 +31,7 @@ import actions.ScreenshotOutput
 import actions.SearchContactsOutput
 import actions.SelectFileOutput
 import actions.SendSmsOutput
-import actions.SetAlarmOutput
 import actions.SetSilentModeOutput
-import actions.SetTimerOutput
 import actions.SetVolumeOutput
 import actions.StorageInfoOutput
 import actions.SystemInfoOutput
@@ -62,9 +59,9 @@ object SmokeResultFormatter {
                 "intent_compose_email", "intent_call_car", "intent_show_map", "intent_play_media",
                 "intent_play_search", "intent_create_note",
                 -> fmt(codec.decode(bytes, serializer<LaunchResult>())) { "launched=${it.launched} pkg=${it.resolvedPackage} ${it.message}" }
-                "set_alarm", "intent_set_alarm" -> fmt(codec.decode(bytes, serializer<SetAlarmOutput>())) { "id=${it.id} scheduled=${it.scheduled} at=${it.triggerAtMs}" }
-                "set_timer", "intent_set_timer" -> fmt(codec.decode(bytes, serializer<SetTimerOutput>())) { "id=${it.id} scheduled=${it.scheduled} at=${it.triggerAtMs}" }
-                "list_alarms", "intent_show_alarms" -> fmt(codec.decode(bytes, serializer<AlarmListOutput>())) { "alarms=${it.alarms.size}" }
+                    "set_alarm", "intent_set_alarm" -> fmt(codec.decode(bytes, serializer<LaunchResult>())) { "launched=${it.launched} pkg=${it.resolvedPackage ?: ""}" }
+                    "set_timer", "intent_set_timer" -> fmt(codec.decode(bytes, serializer<LaunchResult>())) { "launched=${it.launched} pkg=${it.resolvedPackage ?: ""}" }
+                    "list_alarms", "intent_show_alarms" -> fmt(codec.decode(bytes, serializer<LaunchResult>())) { "launched=${it.launched} pkg=${it.resolvedPackage ?: ""}" }
                 "read_sms" -> fmt(codec.decode(bytes, serializer<ReadSmsOutput>())) { "messages=${it.messages.size}" }
                 "send_sms" -> fmt(codec.decode(bytes, serializer<SendSmsOutput>())) { "sent=${it.sent}" }
                 "read_call_log" -> fmt(codec.decode(bytes, serializer<ReadCallLogOutput>())) { "calls=${it.calls.size}" }

@@ -7,7 +7,6 @@ import transport.grpc.ActionServiceImpl
 import transport.grpc.GrpcServer
 import transport.serialization.Codec
 import transport.serialization.JsonCodec
-
 class ActionRuntime(
     private val appContext: Context,
     private val port: Int = 8080,

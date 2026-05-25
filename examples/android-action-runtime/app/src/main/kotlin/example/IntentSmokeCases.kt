@@ -9,11 +9,14 @@ import actions.CreateNoteInput
 import actions.GetContentInput
 import actions.InsertCalendarEventInput
 import actions.InsertContactInput
+import actions.LaunchAppInput
 import actions.OpenDocumentInput
 import actions.PickContactDataInput
 import actions.PickContactInput
 import actions.PlayMediaInput
 import actions.PlayMediaSearchInput
+import actions.ScreenRecordInput
+import actions.SelectFileInput
 import actions.EditContactInput
 import actions.ViewContactInput
 import actions.SetAlarmInput
@@ -31,9 +34,12 @@ data class IntentSmokeCase(
 
 fun buildIntentSmokeCases(codec: JsonCodec, nowMs: Long = System.currentTimeMillis()): List<IntentSmokeCase> {
     return listOf(
-        case(codec, "intent_set_alarm", SetAlarmInput(hour = 7, minutes = 30)),
-        case(codec, "intent_set_timer", SetTimerInput(lengthSeconds = 300)),
-        case(codec, "intent_show_alarms", ShowAlarmsInput()),
+        case(codec, "set_alarm", SetAlarmInput(hour = 7, minutes = 30, skipUi = false)),
+        case(codec, "set_timer", SetTimerInput(lengthSeconds = 300, skipUi = false)),
+        case(codec, "list_alarms", ShowAlarmsInput()),
+        case(codec, "launch_app", LaunchAppInput(packageName = "com.android.settings")),
+        case(codec, "select_file", SelectFileInput()),
+        case(codec, "screen_record", ScreenRecordInput(durationSeconds = 3, withAudio = false)),
         case(
             codec,
             "intent_insert_calendar",
@@ -77,7 +83,7 @@ fun buildIntentSmokeCases(codec: JsonCodec, nowMs: Long = System.currentTimeMill
 private inline fun <reified T> case(codec: JsonCodec, actionName: String, input: T): IntentSmokeCase {
     return IntentSmokeCase(
         actionName = actionName,
-        label = "[intent] $actionName",
+        label = "[ui] $actionName",
         payload = codec.encode(input, serializer()),
     )
 }

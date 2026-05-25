@@ -4,9 +4,9 @@ import kotlinx.serialization.serializer
 import runtime.ActionRegistry
 
 fun ActionRegistry.registerIntentActions() {
-    register("intent_set_alarm", SetAlarmAction(), serializer<SetAlarmInput>(), serializer<SetAlarmOutput>())
-    register("intent_set_timer", SetTimerAction(), serializer<SetTimerInput>(), serializer<SetTimerOutput>())
-    register("intent_show_alarms", ShowAlarmsAction(), serializer<ShowAlarmsInput>(), serializer<AlarmListOutput>())
+    register("intent_set_alarm", SetAlarmAction(), serializer<SetAlarmInput>(), serializer<LaunchResult>())
+    register("intent_set_timer", SetTimerAction(), serializer<SetTimerInput>(), serializer<LaunchResult>())
+    register("intent_show_alarms", ShowAlarmsAction(), serializer<ShowAlarmsInput>(), serializer<LaunchResult>())
     register(
         "intent_insert_calendar",
         InsertCalendarEventAction(),

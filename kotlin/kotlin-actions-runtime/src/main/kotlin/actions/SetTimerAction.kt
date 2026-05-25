@@ -1,56 +1,26 @@
 package actions
 
-import android.app.AlarmManager
-import android.content.Context
-import android.os.SystemClock
+import android.content.Intent
+import android.provider.AlarmClock
 import api.Action
 import api.ActionContext
-import error.ActionException
-import error.ErrorCode
-import java.util.UUID
 import kotlinx.serialization.Serializable
-import util.AlarmStore
+import util.IntentLauncher
 
 @Serializable
 data class SetTimerInput(
     val message: String = "Action Runtime timer",
     val lengthSeconds: Int,
+    val skipUi: Boolean = true,
 )
 
-@Serializable
-data class SetTimerOutput(
-    val id: String,
-    val triggerAtMs: Long,
-    val scheduled: Boolean,
-)
-
-class SetTimerAction : Action<SetTimerInput, SetTimerOutput> {
-    override suspend fun execute(input: SetTimerInput, ctx: ActionContext): SetTimerOutput {
-        val context = ctx.appContext
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            ?: throw ActionException(
-                code = ErrorCode.INTERNAL,
-                message = "AlarmManager unavailable",
-                retryable = true,
-            )
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            if (!alarmManager.canScheduleExactAlarms()) {
-                throw ActionException(
-                    code = ErrorCode.PERMISSION,
-                    message = "Exact alarm scheduling not permitted",
-                    retryable = false,
-                )
-            }
+class SetTimerAction : Action<SetTimerInput, LaunchResult> {
+    override suspend fun execute(input: SetTimerInput, ctx: ActionContext): LaunchResult {
+        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_MESSAGE, input.message)
+            putExtra(AlarmClock.EXTRA_LENGTH, input.lengthSeconds)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, input.skipUi)
         }
-        val triggerAtElapsed = SystemClock.elapsedRealtime() + input.lengthSeconds * 1000L
-        val triggerAtMs = System.currentTimeMillis() + input.lengthSeconds * 1000L
-        val id = UUID.randomUUID().toString()
-        val pendingIntent = buildAlarmIntent(context, id, input.message)
-        alarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAtElapsed, pendingIntent)
-        AlarmStore.add(
-            context,
-            AlarmEntry(id = id, triggerAtMs = triggerAtMs, message = input.message, type = "TIMER"),
-        )
-        return SetTimerOutput(id = id, triggerAtMs = triggerAtMs, scheduled = true)
+        return IntentLauncher.launch(ctx.appContext, intent)
     }
 }
