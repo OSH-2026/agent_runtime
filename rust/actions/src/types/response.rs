@@ -1,7 +1,9 @@
+use super::ActionError;
+
 #[derive(Clone, Debug)]
 pub struct ActionOutput {
     pub payload: Vec<u8>,
-    pub error: Option<String>,
+    pub error: Option<ActionError>,
 }
 
 impl ActionOutput {
@@ -12,8 +14,9 @@ impl ActionOutput {
 
 #[derive(Clone, Debug)]
 pub struct ActionResponse {
+    pub success: bool,
     pub result: Vec<u8>,
-    pub error: Option<String>,
+    pub error: Option<ActionError>,
 }
 
 impl ActionResponse {

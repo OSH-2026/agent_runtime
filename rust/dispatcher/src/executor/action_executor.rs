@@ -53,6 +53,7 @@ impl Executor for ActionExecutor {
                 };
                 let input = ActionInput {
                     payload: context.inputs.clone(),
+                    metadata: std::collections::HashMap::new(),
                 };
                 let output = handle.execute(input).await;
                 if output.is_ok() {
@@ -65,7 +66,7 @@ impl Executor for ActionExecutor {
                     ExecutionResult {
                         node_id,
                         outcome: Outcome::Failure,
-                        error: output.error,
+                        error: output.error.map(|err| format!("{}: {}", err.code, err.message)),
                     }
                 }
             });

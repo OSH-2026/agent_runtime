@@ -17,7 +17,7 @@ impl Action for RemoteAction {
             Ok(response) => response.into_output(),
             Err(error) => ActionOutput {
                 payload: Vec::new(),
-                error: Some(error.message),
+                error: Some(error),
             },
         }
     }

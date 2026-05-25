@@ -9,9 +9,17 @@ service ActionService {
 message ActionRequest {
   string action_name = 1;
   bytes payload = 2;
+  map<string, string> metadata = 3;
 }
 
 message ActionResponse {
-  bytes result = 1;
-  string error = 2;
+  bool success = 1;
+  bytes result = 2;
+  ActionError error = 3;
+}
+
+message ActionError {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
 }
