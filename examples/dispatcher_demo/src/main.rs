@@ -1,8 +1,9 @@
 use actions::{Action, ActionInput, ActionOutput, ActionRegistry};
 use async_trait::async_trait;
 use dispatcher::{
-    ActionExecutor, Contract, Engine, ExecutionContext, ExecutionPlan, GlobalState,
-    InMemoryAuditLog, InMemoryStateStore, Node, NodeConfig, SideEffectLevel, SimpleRecovery,
+    ActionExecutor, ActionPolicy, Contract, Engine, ExecutionContext, ExecutionPlan, GlobalState,
+    InMemoryAuditLog, InMemoryStateStore, Node, NodeConfig, RiskLevel, SideEffectLevel,
+    SimpleRecovery,
 };
 use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ async fn main() {
             retry_budget: 2,
             timeout: Duration::from_secs(5),
             side_effect: SideEffectLevel::Pure,
+            policy: ActionPolicy::default().with_risk(RiskLevel::Low),
         },
         contract: Contract {
             schema: "bytes".to_string(),
@@ -46,6 +48,10 @@ async fn main() {
             retry_budget: 2,
             timeout: Duration::from_secs(5),
             side_effect: SideEffectLevel::Pure,
+            policy: ActionPolicy::default()
+                .with_risk(RiskLevel::High)
+                .with_timeout(10_000)
+                .with_retries(3),
         },
         contract: Contract {
             schema: "bytes".to_string(),

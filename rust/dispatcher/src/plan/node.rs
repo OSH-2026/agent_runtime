@@ -1,4 +1,5 @@
 use crate::plan::Contract;
+use crate::policy::ActionPolicy;
 use std::time::Duration;
 
 pub type NodeId = String;
@@ -17,6 +18,7 @@ pub struct NodeConfig {
     pub retry_budget: u32,
     pub timeout: Duration,
     pub side_effect: SideEffectLevel,
+    pub policy: ActionPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

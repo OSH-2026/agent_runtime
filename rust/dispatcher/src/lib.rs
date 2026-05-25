@@ -1,5 +1,6 @@
 pub mod error;
 pub mod loader;
+pub mod policy;
 
 pub mod executor;
 pub mod plan;
@@ -8,6 +9,8 @@ pub mod runtime;
 pub mod scheduler;
 pub mod state;
 pub mod storage;
+
+pub use policy::{ActionPolicy, RiskLevel};
 
 pub use crate::error::{DispatcherError, PlanError};
 pub use crate::loader::{load_action_flow_from_str, ActionFlowFile};

@@ -1,10 +1,11 @@
 use crate::error::DispatcherError;
 use crate::executor::{ExecutionResult, Executor, Outcome};
 use crate::plan::{ExecutionPlan, NodeId, SideEffectLevel};
+use crate::policy::ActionPolicy;
 use crate::recovery::RecoveryStrategy;
 use crate::runtime::{DiagnosticContext, ExecutionContext};
 use crate::scheduler::{compute_ready_set, Dispatcher};
-use crate::state::GlobalState;
+use crate::state::{GlobalState, NodeState};
 use crate::storage::{AuditEvent, AuditLog, StateStore};
 use crate::plan::validate_dag;
 
@@ -31,6 +32,7 @@ impl Engine {
             }
             let to_run = self.dispatcher.dispatch_ready(ready);
             let to_run = self.enforce_side_effects(to_run);
+            let to_run = self.enforce_policy(to_run);
             for node_id in &to_run {
                 if let Some(transition) = self.state.mark_running(node_id) {
                     self.record_transition(transition);
@@ -91,6 +93,47 @@ impl Engine {
         } else {
             nodes
         }
+    }
+
+    fn enforce_policy(&mut self, nodes: Vec<NodeId>) -> Vec<NodeId> {
+        let mut filtered: Vec<NodeId> = Vec::new();
+        let mut has_high_risk = false;
+        for node_id in nodes {
+            let node = match self.plan.nodes.get(&node_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            if !node.config.policy.can_execute() {
+                if let Some(transition) =
+                    self.state.transition(&node_id, NodeState::WaitingHuman)
+                {
+                    self.record_transition(transition);
+                }
+                continue;
+            }
+            if node.config.policy.requires_serial() {
+                if has_high_risk {
+                    continue;
+                }
+                has_high_risk = true;
+            }
+            filtered.push(node_id);
+        }
+        filtered
+    }
+
+    pub fn update_node_policy(
+        &mut self,
+        node_id: &NodeId,
+        policy: ActionPolicy,
+    ) -> Result<(), DispatcherError> {
+        let node = self
+            .plan
+            .nodes
+            .get_mut(node_id)
+            .ok_or_else(|| DispatcherError::Execution(format!("node not found: {node_id}")))?;
+        node.config.policy = policy;
+        Ok(())
     }
 
     fn record_transitions(&mut self, transitions: Vec<crate::state::Transition>) {

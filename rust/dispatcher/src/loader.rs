@@ -1,5 +1,6 @@
 use crate::error::{DispatcherError, PlanError};
 use crate::plan::{Contract, Edge, ExecutionPlan, Node, NodeConfig, NodeId, SideEffectLevel};
+use crate::policy::{ActionPolicy, RiskLevel};
 use serde::Deserialize;
 use serde_yaml::Value;
 use std::collections::{HashMap, HashSet};
@@ -30,6 +31,22 @@ pub struct FlowDefaults {
     pub timeout_ms: Option<u64>,
     #[serde(default, alias = "sideEffect")]
     pub side_effect: Option<String>,
+    #[serde(default)]
+    pub policy: Option<FlowPolicyYaml>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FlowPolicyYaml {
+    #[serde(default, alias = "timeoutMs")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default, alias = "maxRetries")]
+    pub max_retries: Option<u32>,
+    #[serde(default, alias = "requiresConfirmation")]
+    pub requires_confirmation: Option<bool>,
+    #[serde(default, alias = "collectEvidence")]
+    pub collect_evidence: Option<bool>,
+    #[serde(default, alias = "riskLevel")]
+    pub risk_level: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,6 +63,8 @@ pub struct FlowStep {
     pub timeout_ms: Option<u64>,
     #[serde(default, alias = "sideEffect")]
     pub side_effect: Option<String>,
+    #[serde(default)]
+    pub policy: Option<FlowPolicyYaml>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -64,6 +83,10 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
         if nodes.contains_key(&step.id) {
             return Err(PlanError::DuplicateNode(step.id.clone()).into());
         }
+        let policy = build_policy(
+            step.policy.as_ref(),
+            defaults.as_ref().and_then(|d| d.policy.as_ref()),
+        );
         let node = Node {
             id: step.id.clone(),
             action: step.action.clone(),
@@ -83,6 +106,7 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
                         .or(defaults.as_ref().and_then(|d| d.side_effect.as_deref()))
                         .unwrap_or("pure"),
                 )?,
+                policy,
             },
             contract: Contract {
                 schema: step
@@ -142,6 +166,50 @@ fn parse_side_effect(value: &str) -> Result<SideEffectLevel, DispatcherError> {
             "unknown side_effect: {value}"
         ))
         .into()),
+    }
+}
+
+fn build_policy(
+    step_policy: Option<&FlowPolicyYaml>,
+    default_policy: Option<&FlowPolicyYaml>,
+) -> ActionPolicy {
+    let mut policy = ActionPolicy::default();
+    // merge defaults first
+    if let Some(defaults) = default_policy {
+        merge_policy(&mut policy, defaults);
+    }
+    // step-level overrides
+    if let Some(step) = step_policy {
+        merge_policy(&mut policy, step);
+    }
+    policy
+}
+
+fn merge_policy(policy: &mut ActionPolicy, yaml: &FlowPolicyYaml) {
+    if let Some(v) = yaml.timeout_ms {
+        policy.timeout_ms = v;
+    }
+    if let Some(v) = yaml.max_retries {
+        policy.max_retries = v;
+    }
+    if let Some(v) = yaml.requires_confirmation {
+        policy.requires_confirmation = v;
+    }
+    if let Some(v) = yaml.collect_evidence {
+        policy.collect_evidence = v;
+    }
+    if let Some(ref v) = yaml.risk_level {
+        policy.risk_level = parse_risk_level(v);
+    }
+}
+
+fn parse_risk_level(value: &str) -> RiskLevel {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" => RiskLevel::Low,
+        "medium" => RiskLevel::Medium,
+        "high" => RiskLevel::High,
+        "critical" => RiskLevel::Critical,
+        _ => RiskLevel::Low,
     }
 }
 
