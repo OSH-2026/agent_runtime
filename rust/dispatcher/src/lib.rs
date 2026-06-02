@@ -9,6 +9,7 @@ pub mod runtime;
 pub mod scheduler;
 pub mod state;
 pub mod storage;
+pub mod subagent;
 
 pub use policy::{ActionPolicy, RiskLevel};
 
@@ -20,3 +21,4 @@ pub use crate::recovery::{RecoveryAction, RecoveryLevel, RecoveryStrategy, Simpl
 pub use crate::runtime::{DiagnosticContext, Engine, ExecutionContext};
 pub use crate::storage::{AuditEvent, AuditLog, InMemoryAuditLog, InMemoryStateStore, StateStore};
 pub use crate::state::{GlobalState, NodeState, Transition};
+pub use crate::subagent::DispatcherToolExecutor;
