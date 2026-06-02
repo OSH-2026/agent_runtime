@@ -31,18 +31,15 @@ agent_runtime/
 - 调度内核具备 DAG 校验、节点状态机、就绪集合计算与 side-effect 并发约束。
 - 执行引擎完成可运行闭环：执行、审计日志、状态持久化、诊断上下文采集。
 - Recovery 层具备可配置重试预算与升级门控，并与诊断上下文解耦。
-- Rust ↔ Kotlin 侧执行桥已完成 gRPC 实现与远程 Action 调用联通。
+- Rust-Kotlin 桥已完成 gRPC 实现与远程 Action 调用联通。
 - 已实现 ActionFlow 静态文件 loader，按数据引用自动建图并生成执行计划。
 - 示例 `dispatcher_demo` 可在本地运行，验证 DAG 调度与 Action 执行流程。
 - 模型组已完成 llama.cpp 移动端实机测试（CPU 和 GPU）。
 
 ## 下一步计划
 
-- 补齐 ActionFlow loader 的序列化规范文档与字段约束，提供更多样例。
-- 实现 Join 语义（all-of / any-of）与条件分支的模型化支持。
-- 实现 policy engine 与 audit（审计）模块。
+- 实现 audit 模块。
 - 为审计日志与状态存储提供可选的文件持久化后端。
-- 增加端到端测试与回放验证，覆盖失败与恢复路径。
 
 ## 会议记录
 
