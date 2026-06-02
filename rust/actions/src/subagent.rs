@@ -102,7 +102,10 @@ impl SubagentAction {
         let mut history = Vec::new();
         history.push(ChatMessage {
             role: "system".to_string(),
-            content: req.system_prompt.unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
+            content: req
+                .system_prompt
+                .clone()
+                .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
             name: None,
         });
         history.push(ChatMessage {

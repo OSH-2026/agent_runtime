@@ -8,6 +8,7 @@ pub mod types;
 pub use registry::ActionRegistry;
 pub use subagent::{SubagentAction, SubagentInput, SubagentOutput, ToolExecutor};
 pub use types::{ActionError, ActionInput, ActionOutput, ActionRequest, ActionResponse};
+pub use client::ActionClient;
 
 use async_trait::async_trait;
 

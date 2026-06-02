@@ -16,7 +16,7 @@ use crate::state::GlobalState;
 use crate::storage::{InMemoryAuditLog, InMemoryStateStore};
 use crate::{DispatcherError, PlanError};
 use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
+use base64::Engine as _;
 
 pub struct DispatcherToolExecutor {
     registry: Arc<ActionRegistry>,

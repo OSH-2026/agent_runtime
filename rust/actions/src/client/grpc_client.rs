@@ -1,6 +1,8 @@
+use crate::client::ActionClient;
 use crate::protocol::grpc::action_service_client::ActionServiceClient;
 use crate::protocol::grpc::{ActionError as ProtoError, ActionRequest as ProtoRequest};
 use crate::types::{ActionError, ActionRequest, ActionResponse};
+use async_trait::async_trait;
 use tonic::transport::Endpoint;
 
 #[derive(Clone, Debug)]
@@ -39,6 +41,13 @@ impl GrpcClient {
             result: response.result,
             error,
         })
+    }
+}
+
+#[async_trait]
+impl ActionClient for GrpcClient {
+    async fn call(&self, request: ActionRequest) -> Result<ActionResponse, ActionError> {
+        GrpcClient::call(self, request).await
     }
 }
 
