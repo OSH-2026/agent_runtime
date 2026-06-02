@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::executor::{ExecutionResult, Executor, Outcome};
+use crate::input_resolver::resolve_node_payload;
 use crate::loader::{load_action_flow_from_str, ActionFlowFile};
 use crate::plan::{ExecutionPlan, NodeId};
 use crate::recovery::SimpleRecovery;
@@ -89,8 +90,8 @@ impl Executor for CapturingExecutor {
     ) -> Vec<ExecutionResult> {
         let mut results = Vec::new();
         for node_id in nodes {
-            let action_name = match self.plan.nodes.get(&node_id) {
-                Some(node) => node.action.clone(),
+            let node = match self.plan.nodes.get(&node_id) {
+                Some(node) => node,
                 None => {
                     results.push(ExecutionResult {
                         node_id,
@@ -100,6 +101,7 @@ impl Executor for CapturingExecutor {
                     continue;
                 }
             };
+            let action_name = node.action.clone();
             let handle = match self.registry.get(&action_name) {
                 Some(handle) => handle,
                 None => {
@@ -111,8 +113,25 @@ impl Executor for CapturingExecutor {
                     continue;
                 }
             };
+            let payload = match self.outputs.lock() {
+                Ok(guard) => resolve_node_payload(node, &guard, &context.inputs),
+                Err(_) => Err(crate::error::DispatcherError::Execution(
+                    "output lock poisoned".to_string(),
+                )),
+            };
+            let payload = match payload {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    results.push(ExecutionResult {
+                        node_id,
+                        outcome: Outcome::Failure,
+                        error: Some(error.to_string()),
+                    });
+                    continue;
+                }
+            };
             let input = ActionInput {
-                payload: context.inputs.clone(),
+                payload,
                 metadata: HashMap::new(),
             };
             let output = handle.execute(input).await;

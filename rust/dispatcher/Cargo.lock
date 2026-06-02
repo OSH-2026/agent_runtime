@@ -203,6 +203,7 @@ dependencies = [
  "async-trait",
  "base64",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tokio",
 ]

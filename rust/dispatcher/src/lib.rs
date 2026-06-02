@@ -3,6 +3,7 @@ pub mod loader;
 pub mod policy;
 
 pub mod executor;
+pub mod input_resolver;
 pub mod plan;
 pub mod recovery;
 pub mod runtime;

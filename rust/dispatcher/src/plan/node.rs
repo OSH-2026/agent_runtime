@@ -1,5 +1,6 @@
 use crate::plan::Contract;
 use crate::policy::ActionPolicy;
+use serde_json::Value;
 use std::time::Duration;
 
 pub type NodeId = String;
@@ -9,6 +10,7 @@ pub type ActionRef = String;
 pub struct Node {
     pub id: NodeId,
     pub action: ActionRef,
+    pub inputs: Option<Value>,
     pub config: NodeConfig,
     pub contract: Contract,
 }

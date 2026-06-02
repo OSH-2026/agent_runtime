@@ -13,3 +13,4 @@ actions = { path = "../actions" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 base64 = "0.22"
+serde_json = "1"

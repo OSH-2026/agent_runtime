@@ -87,9 +87,17 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
             step.policy.as_ref(),
             defaults.as_ref().and_then(|d| d.policy.as_ref()),
         );
+        let inputs = match &step.inputs {
+            Some(value) => Some(
+                serde_json::to_value(value)
+                    .map_err(|err| PlanError::InvalidFormat(err.to_string()))?,
+            ),
+            None => None,
+        };
         let node = Node {
             id: step.id.clone(),
             action: step.action.clone(),
+            inputs,
             config: NodeConfig {
                 retry_budget: step
                     .retry_budget
