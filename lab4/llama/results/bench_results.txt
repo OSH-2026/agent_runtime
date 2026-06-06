@@ -1,0 +1,37 @@
+===== LLAMA-BENCH RESULTS =====
+Date: 2026-05-25
+Model: Qwen2.5-1.5B-Instruct Q4_K_M (1.04 GiB, 1.78B params)
+Hardware: 2 vCPU (Xeon Silver 4110 @ 2.10GHz, AVX-512), 6GB RAM
+llama.cpp build: c1f1e28
+
+=== THREAD SCALING (pp64, tg128) ===
+threads=1:  pp64=17.54 ± 0.67 t/s,  tg128=6.54 ± 0.02 t/s
+threads=2:  pp64=28.58 ± 2.16 t/s,  tg128=10.75 ± 0.13 t/s
+threads=4:  pp64=28.39 ± 1.64 t/s,  tg128=8.71 ± 0.11 t/s
+threads=16: pp512=27.74 ± 0.21 t/s, tg128=4.05 ± 0.02 t/s
+
+=== BATCH SIZE (t=2, tg128) ===
+batch=128 (pp128): pp128=30.09 ± 1.02 t/s, tg128=10.94 ± 0.17 t/s
+batch=256 (pp256): pp256=31.25 ± 0.85 t/s, tg128=10.92 ± 0.08 t/s
+batch=512 (pp512): pp512=31.03 ± 0.77 t/s, tg128=10.88 ± 0.19 t/s
+
+=== MMAP COMPARISON (t=2, pp64, tg128) ===
+mmap=1 (default): pp64=28.58 ± 2.16 t/s, tg128=10.75 ± 0.13 t/s
+mmap=0:           pp64=27.73 ± 1.95 t/s, tg128=10.79 ± 0.21 t/s
+
+=== LLAMA-CLI ACTUAL INFERENCE (t=2) ===
+Prompt processing: 32.9 t/s
+Text generation:   11.0 t/s
+
+=== QUANTIZATION COMPARISON (t=2, pp64, tg128) ===
+Q4_K_M (1.04 GiB): pp64=28.35 ± 1.36 t/s,  tg128=10.75 ± 0.23 t/s
+Q5_K_M (1.19 GiB): pp64=14.76 ± 0.37 t/s,  tg128=8.46 ± 0.23 t/s
+Q8_0   (1.76 GiB): pp64=25.14 ± 0.84 t/s,  tg128=7.41 ± 0.07 t/s
+
+=== PERPLEXITY (llama-perplexity, t=2) ===
+Q4_K_M: PPL = 4.6882 +/- 0.4007  (ctx=512, 2 chunks, ~72s/pass)
+
+=== CTX-SIZE IMPACT (llama-cli, t=2) ===
+ctx=512:  prompt=6.9 t/s,  gen=3.2 t/s
+ctx=1024: prompt=5.7 t/s,  gen=3.6 t/s
+ctx=2048: prompt=8.4 t/s,  gen=3.7 t/s
