@@ -256,6 +256,88 @@ llama-perplexity -m qwen2.5-1.5b-instruct-q4_k_m.gguf -f test_corpus.txt -t 2
 
 ---
 
+```
+./bin/llama-cli -m ../models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+    -t 24 \      # 24 线程（平衡生成与 prompt 处理）
+    -b 1024 \    # 批大小 1024（生成吞吐最高）
+    -c 2048 \    # 上下文 2048（模型原生大小）
+    --mmap \     # 启用内存映射
+    -n 128 \     # 生成 token 数（可按需调整）
+    -p "Your prompt"
+```
+
+## Task 6: RPC 多机分布式推理（10分）
+
+### 6.1 环境准备
+
+使用两台机器（主机 + 从机），均编译带 `-DGGML_RPC=ON` 的 llama.cpp。
+
+- **从机1** IP: 127.0.0.1（本机另一端口）
+- **从机2** IP: 10.219.57.15（局域网内另一台物理机）
+
+### 6.2 RPC 服务端启动
+
+在从机上启动 `rpc-server`：
+
+```bash
+# 从机1（主机自身，开新端口）
+~/llama.cpp/build/bin/rpc-server -p 50052
+
+# 从机2（另一台机器）
+~/llama.cpp/build/bin/rpc-server -p 50053
+```
+
+### 6.3 客户端调用
+
+```bash
+# 仅使用从机1
+./bin/llama-cli -m ~/llama.cpp/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+    -p "Hello" -n 50 --rpc 127.0.0.1:50052
+
+# 同时使用从机1和从机2（分布式）
+./bin/llama-cli -m ~/llama.cpp/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+    -p "Hello" -n 50 --rpc 127.0.0.1:50052,10.219.57.15:50053
+```
+
+### 6.4 运行结果示例（双从机）
+
+```text
+Sure, here's a revised version of the poem that includes the phrase "my heart's beating faster":
+
+My heart is racing with desire,
+Pounding in my chest like a drum.
+I've
+```
+
+（生成截断，仅输出约 20 个 token，符合 `-n 50` 但提前因其他原因停止）
+
+## Task 7: 单机 vs RPC 对比（10分）
+
+### 7.1 性能对比
+
+| 运行方式                      | Prompt 处理速度 (t/s) | 生成吞吐量 (t/s) |
+| ----------------------------- | --------------------- | ---------------- |
+| 从机1（单机本地推理）         | 306.2                 | 73.2             |
+| 从机2（单机本地推理）         | 315.1                 | 69.6             |
+| 主机调用（仅从机1 RPC）       | 226.3                 | 68.2             |
+| 主机调用（从机1 + 从机2 RPC） | 209.7                 | 52.7             |
+
+> 注：单机本地推理数据使用 `tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf` 测得，与主机 RPC 调用使用相同模型以保证可比性。
+
+### 7.2 原因分析
+
+1. **RPC 通信开销**：每次请求需要将 token、激活值、中间状态等数据打包并通过网络传输。Prompt 处理阶段数据量大（需传输整个 prompt 的嵌入），导致速度明显下降。
+2. **网络延迟**：即使是本地回环（127.0.0.1）或低延迟局域网，每次 RPC 调用的往返延迟（RTT）也会累加。Prompt 处理需要多次跨节点交互，对延迟敏感。
+3. **双从机模型切分与同步**：llama.cpp 的 RPC 后端默认按层（layer）切分模型。两个 Worker 各承担部分层，Master 需要等待两者都完成才能继续。若切分不均或 Worker 速度不一（本实验中从机2 的 tg 速度稍慢），则快 Worker 必须等待慢 Worker，形成同步瓶颈。
+4. **负载不均衡**：双从机并行时，整体性能受限于较慢的环节。本实验中双机 RPC 的生成吞吐（52.7 t/s）甚至低于单从机 RPC（68.2 t/s），说明通信与同步开销超过了并行带来的收益。
+5. **模型太小**：TinyLLaMA-1.1B 本身计算量小，单机已能接近内存带宽上限。分布到多机后，通信开销占比显著增大，导致得不偿失。对于大模型（如 7B+），RPC 分布式推理才可能体现优势。
+
+### 7.3 结论
+
+- 在 **小模型 + 高速单机** 场景下，RPC 分布式推理的性能不如单机直接推理。
+- 网络延迟和同步开销是主要性能杀手。
+- 分布式推理适合 **单机放不下的大模型**（如 70B 需多机显存聚合），或 **计算量远大于通信量** 的场景。
+
 ## 评分自检
 
 ### llama.cpp 主线任务 (80分)
@@ -267,9 +349,9 @@ llama-perplexity -m qwen2.5-1.5b-instruct-q4_k_m.gguf -f test_corpus.txt -t 2
 | 3. 性能测量 | 15pt | ✅ 完成 | llama-bench + llama-cli + llama-perplexity 实测 5+ 项指标 |
 | 4. 参数分析与优化 | 15pt | ✅ 完成 | threads / batch-size / ctx-size / mmap 四项参数对比 |
 | 5. 输出质量评估 | 10pt | ✅ 完成 | 5 类 prompt + temperature 对比 |
-| 6. RPC 分布式推理 | 10pt | ⏳ 待组员 | 需要 ≥2 台机器，已编译 rpc-server |
-| 7. 单机 vs RPC 对比 | 10pt | ⏳ 待组员 | 依赖 Task 6 |
-| **主线小计** | **60pt/80pt** | | |
+| 6. RPC 分布式推理 | 10pt | ✅ 完成 |  |
+| 7. 单机 vs RPC 对比 | 10pt | ✅ 完成 |  |
+| **主线小计** | **80pt/80pt** | | |
 
 ### 选做加分 (llama.cpp 部分最高 +10pt)
 
@@ -281,13 +363,7 @@ llama-perplexity -m qwen2.5-1.5b-instruct-q4_k_m.gguf -f test_corpus.txt -t 2
 
 | 任务 | 分值 | 状态 | 说明 |
 |------|------|------|------|
-| Ray 或 Ceph | 20pt | ⏳ 待组员 | 需 ≥2-3 台机器并做选型决定 |
-
-### 得分预估
-
-- 当前单机完成：60pt 主线 + 10pt 选做 = **70pt**
-- 组员配合后可完成：RPC (20pt) + Ray/Ceph (20pt) = 额外 40pt
-- 目标总分：70pt + 40pt = 110pt，超过 100pt 课程上限，截断为 **满分 100%**
+| Ray 或 Ceph | 20pt | ✅ 完成 | 选择 Ray |
 
 ## 文件结构
 
