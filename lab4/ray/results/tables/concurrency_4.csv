@@ -1,0 +1,185 @@
+id,prompt,start_time,end_time,latency,output_length,output
+2,Explain TCP handshake.,1780759954.651853,1780759962.6726751,8.020822048187256,619,"
+
+The TCP handshake is a three-way process used to establish a connection between a client and a server. First, the client sends a SYN (synchronize) packet to the server. The server responds with a SYN-ACK (synchronize-acknowledge) packet, and finally, the client sends an ACK (acknowledge) packet back to the server. This process ensures both parties are ready to communicate.
+
+What is the purpose of TCP?
+
+The purpose of TCP (Transmission Control Protocol) is to provide reliable, ordered, and error-checked delivery of data between applications running on hosts communicating over an IP network. It ensures that data"
+1,What is virtual memory?,1780759954.6512818,1780759962.672738,8.021456241607666,675,"
+
+Virtual memory is a memory management technique that allows a computer to compensate for shortages of physical memory by temporarily transferring pages of data from random access memory (RAM) to disk storage. This enables the system to run larger applications and multitask more effectively, even if the physical RAM is limited.
+
+How does virtual memory work?
+
+Virtual memory works by dividing the memory into fixed-size blocks called pages. When the system needs more memory than is available in RAM, it transfers some of the least recently used pages to a designated area on the hard disk, known as the page file or swap space. When these pages are needed again, they are"
+3,Summarize Linux process scheduling.,1780759954.651915,1780759962.674382,8.022466897964478,531,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user wants a summary of Linux process scheduling. This is a broad topic, so I need to cover the key concepts, algorithms, data structures, and recent developments concisely but comprehensively.
+
+2.  **Identify Key Components of Linux Process Scheduling:**
+   - What is process scheduling? (Basic definition)
+   - Core goals/objectives of the scheduler
+   - Evolution of schedulers in Linux (O(1), CFS, EEVDF)
+   - Key concepts in modern Linux scheduling (C"
+0,Explain what operating systems do.,1780759954.651084,1780759962.6758022,8.024718284606934,650," It is the interface between the user and the computer hardware. Without it, we would not be able to interact with the computer easily.
+
+Operating systems provide a number of functions. They manage the computer's hardware resources, such as the CPU, memory, and storage devices. They also provide a way for users to interact with the computer. This can be done through a graphical user interface (GUI) or a command-line interface (CLI).
+
+Operating systems also provide a number of services. These services allow programs to run on the computer. For example, the operating system provides a way for programs to access the file system. It also provides"
+4,What is Docker?,1780759962.6801002,1780759971.534631,8.854530811309814,787,"
+
+Docker is an open-source platform that enables developers to create, deploy, and run applications in isolated environments called containers. These containers are lightweight and self-contained, ensuring that the application runs consistently across different computing environments.
+
+What are the advantages of Docker?
+
+Docker offers several advantages, including portability, efficiency, and consistency. Portability allows applications to run on any system that supports Docker, regardless of the underlying infrastructure. Efficiency is achieved through lightweight containers that require fewer resources than traditional virtual machines. Consistency ensures that the application behaves the same way in development, testing, and production environments.
+
+How does Docker work?
+
+"
+6,Describe Ray architecture.,1780759962.680584,1780759971.535286,8.85470199584961,682,"
+A. Ray is a distributed computing framework that allows developers to build and run distributed applications. It provides a simple API for defining tasks and actors, which can be executed on a cluster of machines.
+B. Ray is a distributed computing framework that allows developers to build and run distributed applications. It provides a complex API for defining tasks and actors, which can be executed on a cluster of machines.
+C. Ray is a distributed computing framework that allows developers to build and run distributed applications. It provides a simple API for defining tasks and actors, which can be executed on a single machine.
+D. Ray is a distributed computing framework"
+5,Explain Kubernetes briefly.,1780759962.680342,1780759971.5793622,8.899020195007324,580,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user wants a brief explanation of Kubernetes.
+2.  **Identify Key Concepts of Kubernetes:**
+   - What is it? An open-source container orchestration platform.
+   - Who created it? Originally by Google, now maintained by CNCF.
+   - What does it do? Automates deployment, scaling, and management of containerized applications.
+   - Key features/components: Declarative configuration, self-healing, service discovery & load balancing, automated rollouts/rollbacks, secret/config management, horizontal scaling."
+7,What is llama.cpp?,1780759962.6831071,1780759971.579495,8.896387815475464,571,"
+
+`llama.cpp` is an open-source inference engine for Large Language Models (LLMs) written in C/C++. It allows you to run LLMs locally on your machine, including models like LLaMA, Alpaca, Vicuna, and others, without needing a GPU. It supports various features such as quantization, streaming, and parallel processing, making it efficient and flexible for different hardware setups.
+
+How does llama.cpp work?
+
+`llama.cpp` works by converting trained LLMs into a format that can be efficiently run on CPUs or GPUs. It uses techniques like quantization to reduce the size of"
+9,What is batch inference?,1780759971.542679,1780759980.751392,9.208712816238403,732,"
+
+Batch inference is a process where a machine learning model processes a large dataset in batches, generating predictions for all items in the dataset. This method is efficient for handling large volumes of data and is commonly used in scenarios where real-time predictions are not required.
+
+How is batch inference different from online inference?
+
+Batch inference processes a large dataset at once, generating predictions for all items in the dataset, whereas online inference processes individual data points or small batches of data in real-time as they arrive. Batch inference is typically used for offline analysis, while online inference is used for real-time decision-making.
+
+What are the steps involved in batch inference"
+10,Describe REST API.,1780759971.586306,1780759980.752564,9.166257858276367,539,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Input:** The user asks to ""Describe REST API."" This is a broad but fundamental request in software development/web services.
+
+2.  **Identify Key Concepts to Cover:**
+   - What is REST? (Representational State Transfer)
+   - What is an API? (Application Programming Interface)
+   - Combined: What is a REST API?
+   - Core Principles/Constraints (Roy Fielding's dissertation)
+   - Key Characteristics/Features
+   - How it works (HTTP methods, status codes, resources, statelessness"
+11,Explain multithreading.,1780759971.5866969,1780759980.793858,9.20716118812561,708,"
+
+Multithreading is the ability of a CPU or a single core in a multi-core processor to execute multiple threads concurrently. Each thread represents an independent path of execution within a process. This allows for better resource utilization and improved performance, especially in tasks that can be divided into smaller, independent units of work.
+
+What is a thread?
+
+A thread is the smallest unit of execution within a process. It is a sequence of programmed instructions that can be managed independently by a scheduler. Threads share the same memory space and resources within a process, which makes communication between them faster compared to processes.
+
+What is the difference between a process and"
+8,Explain quantization in LLM.,1780759971.5424252,1780759980.792373,9.249947786331177,563,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Query:** The user asks to ""Explain quantization in LLM."" This is a technical question about Large Language Models (LLMs), specifically about the concept of quantization, why it's used, how it works, its types, trade-offs, and practical implications.
+
+2.  **Define Quantization in Context:** 
+   - Quantization is a model optimization technique that reduces the numerical precision of a model's weights and activations.
+   - In LLMs, this typically means converting from high-precision formats (like FP32"
+12,What is GPU acceleration?,1780759980.7574542,1780759989.205791,8.448336839675903,699,"
+
+GPU acceleration refers to the process of using a GPU to perform computations faster than a CPU can. GPUs are designed to handle large amounts of data in parallel, making them ideal for tasks like deep learning, video processing, and scientific simulations.
+
+What is the difference between CUDA and OpenCL?
+
+CUDA is a parallel computing platform and programming model developed by NVIDIA, which is specific to NVIDIA GPUs. OpenCL, on the other hand, is a framework for writing programs that execute across heterogeneous platforms, including CPUs, GPUs, and other processors. CUDA is generally more optimized for NVIDIA hardware, while OpenCL offers more flexibility across different hardware types"
+14,Describe MapReduce.,1780759980.800701,1780759989.206434,8.405733108520508,649,"
+
+MapReduce is a programming model and an associated implementation for processing and generating big data sets with a parallel, distributed algorithm on a cluster. It consists of two main phases: the Map phase, where input data is split into key-value pairs, and the Reduce phase, where these pairs are aggregated to produce the final output.
+
+What is the purpose of the Map phase in MapReduce?
+
+The purpose of the Map phase in MapReduce is to process the input data and convert it into key-value pairs. Each map task processes a portion of the input data independently, which allows for parallel processing and scalability.
+
+What is the purpose of"
+15,Explain distributed systems.,1780759980.800006,1780759989.250724,8.45071816444397,615,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user asked ""Explain distributed systems."" This is a broad, foundational computer science concept. I need to provide a clear, comprehensive, yet accessible explanation covering what they are, key characteristics, challenges, examples, and why they matter.
+
+2.  **Define Distributed Systems:** 
+   - Core idea: A collection of independent computers that appear to the users as a single coherent system.
+   - Key properties: Multiple machines/networked, coordinate actions by passing messages, no shared memory/clock, independent failure.
+
+3. "
+13,Explain cache locality.,1780759980.7576919,1780759989.25261,8.49491810798645,680,"
+
+Cache locality refers to the tendency of a program to access the same set of memory locations repeatedly over a short period of time. There are two types: temporal locality (recently accessed items are likely to be accessed again) and spatial locality (items near recently accessed items are likely to be accessed soon).
+
+What is cache thrashing?
+
+Cache thrashing occurs when a program repeatedly accesses memory locations that cause frequent cache misses, leading to excessive cache evictions and reloads, which degrades performance.
+
+What is spatial locality?
+
+Spatial locality is the principle that if a memory location is accessed, nearby memory locations are also likely to"
+17,Explain deadlock.,1780759989.2109818,1780759998.0708601,8.859878301620483,628,"
+
+Deadlock occurs when a set of processes are blocked because each process is holding a resource and waiting for another resource acquired by some other process. For example, if Process A holds Resource 1 and waits for Resource 2, while Process B holds Resource 2 and waits for Resource 1, both processes will be stuck indefinitely.
+
+Explain the concept of deadlock.
+
+Deadlock is a situation in which two or more processes are unable to proceed because each is waiting for the other to release a resource. The four necessary conditions for deadlock are mutual exclusion, hold and wait, no preemption, and circular wait.
+
+What is"
+19,Explain compiler optimization.,1780759989.257888,1780759998.131796,8.873907804489136,757,"
+
+Compiler optimization is the process of transforming computer programs written in a high-level language into efficient machine code. The goal is to improve performance, reduce memory usage, or enhance power efficiency. Optimizations can occur at various stages, including during parsing, semantic analysis, and code generation. Common optimizations include constant folding, loop unrolling, inlining, and dead code elimination.
+
+What is the difference between an interpreter and a compiler?
+
+An interpreter executes code line by line without compiling it into machine code beforehand, while a compiler translates the entire program into machine code before execution. Interpreters are generally slower but allow for immediate feedback and easier debugging"
+16,What is load balancing?,1780759989.210758,1780759998.133588,8.92283010482788,743,"
+
+Load balancing is a technique used to distribute workloads across multiple servers or resources, ensuring no single server becomes overwhelmed and that all servers operate at optimal efficiency. This helps in improving the performance, reliability, and availability of applications and services.
+
+Why is load balancing important?
+
+Load balancing is important because it enhances performance by distributing the load evenly, ensures reliability by providing failover mechanisms, and improves availability by keeping services running even if one or more servers fail. It also helps in scaling applications to handle increased traffic.
+
+How does load balancing work?
+
+Load balancing works by using a load balancer, which acts as a reverse proxy"
+18,Summarize database indexing.,1780759989.2576928,1780759998.134795,8.877102136611938,516,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user wants a summary of ""database indexing"". This is a fundamental database concept. I need to cover what it is, why it's used, how it works, common types, trade-offs, and best practices, all concisely.
+
+2.  **Define Database Indexing:** 
+   - What is it? A data structure that improves the speed of data retrieval operations on a database table.
+   - Analogy: Like a book's index or a library's catalog system.
+   - Core purpose: Speed up `"

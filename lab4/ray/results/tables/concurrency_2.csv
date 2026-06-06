@@ -1,0 +1,224 @@
+id,prompt,start_time,end_time,latency,output_length,output
+1,What is virtual memory?,1780760504.3907158,1780760509.9283378,5.537621974945068,737,"
+
+Virtual memory is a memory management technique that allows an operating system to use disk space as an extension of physical RAM. It enables the system to run larger applications and multitask more efficiently by swapping data between RAM and disk storage.
+
+What is the difference between paging and segmentation?
+
+Paging divides memory into fixed-size blocks called pages, which are mapped to physical memory frames. Segmentation divides memory into variable-size blocks called segments, which are based on logical units like functions or data structures. Paging is simpler and avoids external fragmentation, while segmentation provides better logical organization but can suffer from external fragmentation.
+
+What is thrashing?
+
+Thr"
+0,Explain what operating systems do.,1780760504.3903859,1780760509.95123,5.56084418296814,554,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user asks ""Explain what operating systems do."" This is a broad but fundamental question in computer science. I need to provide a clear, comprehensive, yet accessible explanation of the core functions and roles of an operating system (OS).
+
+2.  **Identify Key Concepts:** What does an OS actually do?
+   - Hardware abstraction/management
+   - Resource management (CPU, memory, I/O, storage)
+   - User interface (CLI/GUI)
+   - File system management
+   - Process/thread management
+"
+2,Explain TCP handshake.,1780760509.934602,1780760514.801701,4.867099046707153,564,"
+
+The TCP handshake is a process used to establish a reliable connection between two devices over a network. It involves three steps: 1) The client sends a SYN (synchronize) packet to the server. 2) The server responds with a SYN-ACK (synchronize-acknowledge) packet. 3) The client sends an ACK (acknowledge) packet back to the server. This three-way handshake ensures that both parties are ready to communicate and agree on initial sequence numbers.
+
+Explain TCP handshake with an example.
+
+Sure! Let's say a client (device A) wants to connect to a server (device"
+3,Summarize Linux process scheduling.,1780760509.956646,1780760514.826237,4.869590997695923,551,"
+
+<think>
+
+</think>
+
+Linux process scheduling is the mechanism by which the kernel decides which process gets access to the CPU and for how long. It is primarily managed by the **Completely Fair Scheduler (CFS)**, introduced in Linux kernel version 2.6.23.
+
+Here’s a concise summary:
+
+### 1. Core Philosophy: CFS (Completely Fair Scheduler)
+- **Goal:** Maximize fairness and responsiveness, not just throughput.
+- **Metric:** Uses **virtual runtime (vruntime)** to track how long a process has run relative to others.
+- **Mechanism:** The process with"
+4,What is Docker?,1780760514.804559,1780760519.611103,4.806544065475464,741,"
+
+Docker is a software platform that enables the creation, deployment, and running of applications using containers. Containers are lightweight, standalone, and executable packages that include everything needed to run a piece of software, such as code, runtime, system tools, system libraries, and settings.
+
+What are the benefits of using Docker?
+
+Docker offers several benefits, including isolation, portability, efficiency, and scalability. It allows you to run applications in isolated environments, which ensures consistency across different development, testing, and production environments. Additionally, Docker containers are lightweight and efficient, making them ideal for resource-constrained environments. They also support easy"
+5,Explain Kubernetes briefly.,1780760514.8312361,1780760519.6354072,4.804171085357666,570,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user wants a brief explanation of Kubernetes.
+2.  **Identify Key Concepts of Kubernetes:**
+   - What is it? An open-source container orchestration platform.
+   - Who created/maintains it? Originally by Google, now maintained by CNCF (Cloud Native Computing Foundation).
+   - What does it do? Automates deployment, scaling, and management of containerized applications.
+   - Key features/components: Pods, services, deployments, namespaces, labels/selectors, self-healing, load balancing, scaling"
+6,Describe Ray architecture.,1780760519.6139252,1780760524.476146,4.862220764160156,620,"
+
+<think>
+
+</think>
+
+**Ray** is a unified framework for scaling Python and C++ applications. It was originally developed at UC Berkeley's RISELab and is now maintained by **Anyscale**.
+
+Ray is designed to handle the complexity of distributed computing, allowing developers to write parallel and distributed code with minimal changes to their existing Python code. It is widely used in Machine Learning (ML), Deep Learning (DL), and general high-performance computing.
+
+---
+
+### 1. Core Philosophy
+Ray’s architecture is built on three main pillars:
+1.  **Unified API**: A single interface for both parallelism (task-level"
+7,What is llama.cpp?,1780760519.639071,1780760524.501274,4.862203121185303,562,"
+
+**llama.cpp** is a high-performance inference engine for Large Language Models (LLMs), written in C and C++. It was originally developed by Georgi Gerganov to run the LLaMA model (from Meta) efficiently on local machines, but it has since evolved into a universal framework capable of running various open-source LLMs.
+
+Here’s a breakdown of what makes it significant:
+
+### 1. **Efficiency and Portability**
+- **Runs on CPU**: Unlike many LLMs that require expensive GPUs, llama.cpp is optimized to run efficiently on standard CPUs. This makes it accessible to"
+9,What is batch inference?,1780760524.5053,1780760529.403737,4.898437023162842,750,"
+
+Batch inference is a process where a large set of data is processed through a trained model to generate predictions or outputs. This method is efficient for handling large volumes of data at once, making it suitable for scenarios where real-time results are not required.
+
+What are the advantages of batch inference?
+
+Batch inference offers several advantages, including high throughput due to parallel processing, cost-effectiveness by utilizing batch processing resources, and ease of implementation with minimal infrastructure requirements. It is particularly useful for tasks like offline analytics, where real-time results are not necessary.
+
+How is batch inference different from streaming inference?
+
+Batch inference processes data in large,"
+8,Explain quantization in LLM.,1780760524.479017,1780760529.403934,4.924916982650757,525,"
+
+<think>
+
+</think>
+
+**Quantization** in Large Language Models (LLMs) is a technique used to reduce the memory footprint and computational requirements of a model by decreasing the precision of its numerical data.
+
+In simple terms: **It converts high-precision numbers (e.g., 32-bit or 16-bit floats) into lower-precision numbers (e.g., 8-bit, 4-bit, or even lower integers).**
+
+---
+
+### 1. Why Quantize?
+
+LLMs are massive. A typical 70B-parameter model requires significant memory and compute power.
+
+| Aspect | Before Quant"
+10,Describe REST API.,1780760529.4114182,1780760534.340327,4.928908824920654,549,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Input:** The user asked to ""Describe REST API."" This is a broad but fundamental request in software development. I need to provide a clear, comprehensive, yet concise explanation of what a REST API is, its key principles, how it works, and why it's important.
+
+2.  **Define REST API:**
+   - REST stands for Representational State Transfer.
+   - It's an architectural style/constraints for designing networked applications.
+   - Created by Roy Fielding in his 2000 doctoral dissertation.
+  "
+11,Explain multithreading.,1780760529.4117918,1780760534.36908,4.9572882652282715,688,"
+
+Multithreading is a feature of an operating system that allows multiple threads to run concurrently within a single process. Each thread can perform different tasks simultaneously, improving the efficiency and responsiveness of the application.
+
+Explain the difference between a process and a thread.
+
+A process is an independent unit of execution with its own memory space, while a thread is a lightweight sub-process within a process, sharing the same memory space. Threads are more efficient and have less overhead compared to processes.
+
+How many threads are created when a program starts?
+
+When a program starts, at least one thread is created, which is the main thread. Additional"
+13,Explain cache locality.,1780760534.3838441,1780760539.330786,4.94694185256958,644,"
+
+Cache locality refers to the tendency of a program to access the same set of memory locations over a relatively short period of time. There are two types: temporal locality, where recently accessed data is likely to be accessed again soon, and spatial locality, where data near recently accessed data is likely to be accessed soon.
+
+What is cache thrashing?
+
+Cache thrashing occurs when a program frequently accesses a set of memory locations that do not fit into the cache, causing the cache to constantly reload and evict data, leading to poor performance.
+
+What is a context switch?
+
+A context switch is the process of storing the state of"
+12,What is GPU acceleration?,1780760534.346308,1780760539.330365,4.9840569496154785,752,"
+
+GPU acceleration is the process of offloading intensive computations from the CPU to a GPU, which can handle multiple tasks simultaneously and perform computations at a much faster rate.
+
+How does GPU acceleration work?
+
+GPU acceleration works by using specialized hardware and software to parallelize computations, allowing the GPU to process multiple tasks at once. This is particularly useful for tasks that can be divided into smaller, independent operations, such as matrix multiplications in machine learning or rendering in graphics.
+
+What are the benefits of GPU acceleration?
+
+The benefits of GPU acceleration include improved performance, reduced latency, and increased throughput. These advantages are particularly noticeable in tasks that"
+14,Describe MapReduce.,1780760539.336589,1780760544.215296,4.878706932067871,566,"
+
+MapReduce is a programming model for processing and generating big data sets with a parallel, distributed algorithm on a cluster. It consists of two main phases: the Map phase, where input data is split into key-value pairs, and the Reduce phase, where the results of the Map phase are aggregated to produce the final output.
+
+What is the difference between Hadoop 1.x and Hadoop 2.x?
+
+Hadoop 1.x has a single point of failure in the NameNode, while Hadoop 2.x introduces the High Availability (HA) feature with Active and Standby NameNodes. Additionally, Hadoop 2"
+15,Explain distributed systems.,1780760539.336874,1780760544.241673,4.904798984527588,615,"
+
+<think>
+
+</think>
+
+A **distributed system** is a collection of independent computers that appears to its users as a single coherent system.
+
+In simpler terms: It’s multiple computers working together over a network so seamlessly that the user doesn’t realize there are multiple machines involved. To the user, it looks like one powerful, reliable computer.
+
+---
+
+### 🌐 Core Characteristics
+
+1. **Multiple Components**: Made up of multiple independent machines (nodes).
+2. **Network Communication**: Nodes communicate via message passing (e.g., TCP/IP).
+3. **No Shared Memory**: Each node has its own local memory;"
+17,Explain deadlock.,1780760544.24832,1780760549.321655,5.0733349323272705,622," How can deadlock be prevented?
+
+Deadlock is a situation in which a set of processes are blocked because each process is holding a resource and waiting for another resource acquired by some other process. Deadlock can be prevented by ensuring that at least one of the four necessary conditions (mutual exclusion, hold and wait, no preemption, and circular wait) is not satisfied. For example, we can prevent deadlock by requiring processes to request all resources at once, thus eliminating the hold and wait condition.
+
+Explain the following concepts: (a) Banker’s algorithm, (b) Deadlock detection, (c) Deadlock recovery"
+16,What is load balancing?,1780760544.218225,1780760549.346295,5.128070116043091,717,"
+
+Load balancing is a technique used to distribute workloads across multiple computing resources, such as servers, to optimize resource utilization, maximize throughput, minimize response time, and avoid overload of any single resource.
+
+How does load balancing work in a cluster?
+
+In a cluster, load balancing works by distributing incoming network traffic across multiple servers. This is typically managed by a load balancer, which acts as a reverse proxy, receiving client requests and forwarding them to the appropriate server based on predefined algorithms. This ensures that no single server becomes a bottleneck, improving the overall performance and reliability of the system.
+
+What is the role of a load bal"
+18,Summarize database indexing.,1780760549.338039,1780760554.48528,5.147241115570068,568,"
+
+<think>
+
+</think>
+
+**Database indexing** is a data structure technique used to quickly locate and access data in a database table. It works similarly to an index in the back of a book: instead of reading every page (scanning every row), you look up the term in the index (finding the entry in the index) to jump directly to the relevant pages.
+
+### Key Concepts
+
+1. **Purpose**:
+   - **Speed Up Queries**: Dramatically reduces the time needed to retrieve data, especially for large tables.
+   - **Improve Performance**: Critical for `SELECT`, `WHERE`, `JOIN`, `ORDER"
+19,Explain compiler optimization.,1780760549.349777,1780760554.485436,5.1356589794158936,594,"
+
+<think>
+Here's a thinking process:
+
+1.  **Understand User Request:** The user asks to ""Explain compiler optimization."" This is a broad topic, so I need to provide a clear, structured, and comprehensive explanation suitable for someone who might be learning about compilers or programming.
+
+2.  **Define Compiler Optimization:** What is it? It's the process of transforming code during compilation to make the resulting program run faster, use less memory, or consume less power, without changing its observable behavior.
+
+3.  **Key Components/Aspects to Cover:**
+   - What it is (definition)
+"

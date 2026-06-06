@@ -2,7 +2,7 @@ import ray
 import requests
 import time
 import pandas as pd
-from typing import List
+from typing import Literal
 
 ####################################################
 # Configuration
@@ -11,7 +11,6 @@ from typing import List
 LLAMA_SERVER = "http://127.0.0.1:8080/completion"
 
 PROMPTS = [
-
     "Explain what operating systems do.",
     "What is virtual memory?",
     "Explain TCP handshake.",
@@ -32,7 +31,6 @@ PROMPTS = [
     "Explain deadlock.",
     "Summarize database indexing.",
     "Explain compiler optimization."
-
 ]
 
 ####################################################
@@ -40,27 +38,24 @@ PROMPTS = [
 ####################################################
 
 
-def llama_inference(prompt: str) -> str:
-
+def llama_inference(prompt: str) -> str | None:
     payload = {
-
         "prompt": prompt,
         "n_predict": 128,
         "temperature": 0.7
-
     }
 
-    response = requests.post(
-        LLAMA_SERVER,
-        json=payload,
-        timeout=300
-    )
-
-    response.raise_for_status()
-
-    result = response.json()
-
-    return result.get("content", "")
+    try:
+        response = requests.post(
+            LLAMA_SERVER,
+            json=payload,
+            timeout=300
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result.get("content", "")
+    except Exception:
+        return None
 
 
 ####################################################
@@ -69,27 +64,19 @@ def llama_inference(prompt: str) -> str:
 
 @ray.remote
 def inference_task(prompt_id: int, prompt: str):
-
     start = time.time()
-
     output = llama_inference(prompt)
-
     end = time.time()
-
     return {
-
         "id": prompt_id,
         "prompt": prompt,
 
         "start_time": start,
         "end_time": end,
-
         "latency": end - start,
 
         "output_length": len(output),
-
         "output": output
-
     }
 
 
@@ -97,36 +84,25 @@ def inference_task(prompt_id: int, prompt: str):
 # Serial Baseline
 ####################################################
 
-def run_serial(prompts: List[str]):
-
+def run_serial(prompts: list[str]):
     print("\nRunning serial inference...\n")
-
     results = []
-
     total_start = time.time()
 
     for idx, p in enumerate(prompts):
-
         start = time.time()
-
         output = llama_inference(p)
-
         end = time.time()
-
         results.append({
-
             "id": idx,
             "prompt": p,
 
             "start_time": start,
             "end_time": end,
-
             "latency": end-start,
 
             "output_length": len(output),
-
             "output": output
-
         })
 
     total_end = time.time()
@@ -136,77 +112,92 @@ def run_serial(prompts: List[str]):
         f"{total_end-total_start:.2f} sec"
     )
 
-    return results
+    return (results, total_end-total_start)
 
 
 ####################################################
 # Ray Parallel
 ####################################################
 
-def run_parallel(prompts: List[str]):
-
-    print("\nRunning Ray parallel inference...\n")
-
+def run_parallel(prompts: list[str], concurrency: int = 1):
+    print(
+        f"\nRunning parallel "
+        f"(concurrency={concurrency})\n"
+    )
     total_start = time.time()
+    results = []
+    running = []
+    prompt_iter = iter(
+        enumerate(prompts)
+    )
+    # 先填满并发池
+    for _ in range(concurrency):
+        try:
+            idx, p = next(prompt_iter)
+            running.append(
+                inference_task.remote(
+                    idx, p
+                )
+            )
+        except StopIteration:
+            break
 
-    futures = [
-
-        inference_task.remote(i, p)
-
-        for i, p in enumerate(prompts)
-
-    ]
-
-    results = ray.get(futures)
+    # 动态补充任务
+    while running:
+        finished, running = ray.wait(
+            running,
+            num_returns=1
+        )
+        result = ray.get(
+            finished[0]
+        )
+        results.append(result)
+        try:
+            idx, p = next(prompt_iter)
+            running.append(
+                inference_task.remote(
+                    idx, p
+                )
+            )
+        except StopIteration:
+            pass
 
     total_end = time.time()
 
     print(
-        f"Parallel total time = "
-        f"{total_end-total_start:.2f} sec"
+        f"Total time: "
+        f"{total_end-total_start:.2f}s"
     )
 
-    return results
+    return (results, total_end-total_start)
 
 
 ####################################################
 # Metrics
 ####################################################
 
-def summarize(results, name):
-
+def summarize(results: list, total_time: float, name: Literal["SERIAL", "PARALLEL"]):
     df = pd.DataFrame(results)
-
-    if name == "PARALLEL":
-        throughput = len(df)/df["latency"].max()
-    else:
-        throughput = len(df)/df["latency"].sum()
+    throughput = len(df) / total_time
 
     print("\n====================")
-
     print(name)
-
     print("====================")
-
     print(
         f"Requests: {len(df)}"
     )
-
     print(
         f"Average latency: "
         f"{df['latency'].mean():.2f}s"
     )
-
     print(
         f"P95 latency: "
         f"{df['latency'].quantile(0.95):.2f}s"
     )
-
     print(
         f"Throughput: "
         f"{throughput:.2f} req/sec"
     )
-
     return df
 
 
@@ -215,27 +206,26 @@ def summarize(results, name):
 ####################################################
 
 if __name__ == "__main__":
-
     ray.init()
+    # serial_results, serial_time = run_serial(PROMPTS)
+    parallel_results, parallel_time = run_parallel(PROMPTS)
 
-    serial_results = run_serial(PROMPTS)
-
-    parallel_results = run_parallel(PROMPTS)
-
-    serial_df = summarize(
-        serial_results,
-        "SERIAL"
-    )
+    # serial_df = summarize(
+    #     serial_results,
+    #     serial_time,
+    #     "SERIAL"
+    # )
 
     parallel_df = summarize(
         parallel_results,
+        parallel_time,
         "PARALLEL"
     )
 
-    serial_df.to_csv(
-        "serial_results.csv",
-        index=False
-    )
+    # serial_df.to_csv(
+    #     "serial_results.csv",
+    #     index=False
+    # )
 
     parallel_df.to_csv(
         "parallel_results.csv",
