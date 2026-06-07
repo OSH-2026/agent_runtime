@@ -358,6 +358,7 @@ I've
 | 任务 | 分值 | 状态 | 说明 |
 |------|------|------|------|
 | 量化格式对比 | +10pt | ✅ 完成 | Q4_K_M / Q5_K_M / Q8_0 性能对比分析 |
+| 对 llama.cpp 中某个关键机制进行源码阅读和解释，如 GGUF 加载、KV cache、batch、tokenizer、RPC backend 等。 | +10pt | ✅ 完成 | 见 kv-cache-deep-dive.md |
 
 ### Ray / Ceph 选择性必做 (20pt)
 
@@ -371,6 +372,7 @@ I've
 lab4/
 ├── README.md           # 本实验报告
 ├── AI_used_record.md   # AI 使用记录
+    kv-cache-deep-dive.md
 ├── scripts/            # 测试脚本
 │   └── bench.sh        # 可复现 benchmark 脚本
 └── results/            # 测试结果
@@ -385,7 +387,7 @@ lab4/
 
 ---
 
-## 选做：量化格式对比 (Q4_K_M vs Q5_K_M vs Q8_0)
+## 选做一：量化格式对比 (Q4_K_M vs Q5_K_M vs Q8_0)
 
 ### 模型信息
 
@@ -423,3 +425,7 @@ lab4/
 ### 推荐
 
 对于 resource-constrained 的单机部署（如本实验的 2 vCPU / 6 GB RAM 环境），**Q4_K_M 是最佳选择**：加载快、推理速度快、质量可接受。如果磁盘空间允许且对质量有更高要求，Q5_K_M 是更好的质量选择但需接受约 50% 的速度惩罚。
+
+## 选做二：对 llama.cpp 中某个关键机制进行源码阅读和解释，如 GGUF 加载、KV cache、batch、tokenizer、RPC backend 等。
+
+见 kv-cache-deep-dive.md。
