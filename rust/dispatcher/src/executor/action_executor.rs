@@ -1,14 +1,15 @@
 use crate::executor::{ExecutionResult, Executor, Outcome};
+use crate::input_resolver::resolve_node_payload;
 use crate::plan::{ExecutionPlan, NodeId};
 use crate::runtime::ExecutionContext;
 use actions::{ActionInput, ActionRegistry};
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::task::JoinSet;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
-use crate::input_resolver::resolve_node_payload;
+use tokio::task::JoinSet;
 
+#[derive(Clone)]
 pub struct ActionExecutor {
     registry: Arc<ActionRegistry>,
     plan: Arc<ExecutionPlan>,
@@ -22,6 +23,13 @@ impl ActionExecutor {
             plan,
             outputs: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn outputs(&self) -> HashMap<NodeId, Vec<u8>> {
+        self.outputs
+            .lock()
+            .map(|outputs| outputs.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -94,7 +102,9 @@ impl Executor for ActionExecutor {
                     ExecutionResult {
                         node_id,
                         outcome: Outcome::Failure,
-                        error: output.error.map(|err| format!("{}: {}", err.code, err.message)),
+                        error: output
+                            .error
+                            .map(|err| format!("{}: {}", err.code, err.message)),
                     }
                 }
             });

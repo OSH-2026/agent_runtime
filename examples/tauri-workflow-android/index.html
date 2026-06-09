@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Workflow Dispatcher</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="app-shell">
+      <header>
+        <p class="eyebrow">ACTION FABRIC / ANDROID</p>
+        <h1>Workflow Dispatcher</h1>
+        <p class="subtitle">输入 ActionFlow YAML，由 Rust dispatcher 构图并调度执行。</p>
+      </header>
+
+      <section class="panel editor-panel">
+        <div class="section-heading">
+          <label for="workflow">Workflow YAML</label>
+          <button id="reset-button" class="text-button" type="button">恢复示例</button>
+        </div>
+        <textarea id="workflow" spellcheck="false" autocapitalize="off"></textarea>
+        <label class="input-label" for="grpc-endpoint">Kotlin gRPC endpoint</label>
+        <input
+          id="grpc-endpoint"
+          value="127.0.0.1:8080"
+          spellcheck="false"
+          autocapitalize="off"
+          placeholder="127.0.0.1:8080"
+        />
+        <label class="input-label" for="workflow-input">默认输入（可选）</label>
+        <input id="workflow-input" placeholder="没有 inputs 的节点会收到这段文本" />
+        <button id="run-button" class="run-button" type="button">
+          <span id="run-label">运行 workflow</span>
+          <span class="shortcut">Rust</span>
+        </button>
+      </section>
+
+      <section id="result-panel" class="panel result-panel" aria-live="polite">
+        <div class="section-heading">
+          <h2>执行结果</h2>
+          <span id="status" class="status idle">等待运行</span>
+        </div>
+        <p id="message" class="result-message">运行后将在这里显示节点输出和调度轨迹。</p>
+        <div id="result-content" class="result-content hidden">
+          <h3>节点输出</h3>
+          <div id="outputs" class="output-list"></div>
+          <h3>调度轨迹</h3>
+          <ol id="audit" class="audit-list"></ol>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

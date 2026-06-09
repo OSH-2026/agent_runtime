@@ -1,0 +1,258 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #20231f;
+  background: #f4f1e8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(222, 117, 72, 0.18), transparent 35%),
+    #f4f1e8;
+}
+
+.app-shell {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: max(28px, env(safe-area-inset-top)) 18px max(36px, env(safe-area-inset-bottom));
+}
+
+header {
+  padding: 8px 4px 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #be5734;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 9vw, 3.4rem);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+
+.subtitle {
+  max-width: 33rem;
+  margin: 14px 0 0;
+  color: #65685f;
+}
+
+.panel {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #d7d2c4;
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.88);
+  box-shadow: 0 14px 40px rgba(58, 49, 34, 0.08);
+}
+
+.section-heading,
+.output-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-heading label,
+h2,
+h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+h3 {
+  margin: 18px 0 8px;
+  color: #797a72;
+  font-size: 0.7rem;
+}
+
+textarea,
+input {
+  width: 100%;
+  border: 1px solid #cbc5b6;
+  border-radius: 12px;
+  color: #252821;
+  background: #f8f6ef;
+  outline: none;
+}
+
+textarea:focus,
+input:focus {
+  border-color: #be5734;
+  box-shadow: 0 0 0 3px rgba(190, 87, 52, 0.12);
+}
+
+textarea {
+  min-height: 330px;
+  margin-top: 10px;
+  padding: 14px;
+  resize: vertical;
+  font: 0.78rem/1.5 "SFMono-Regular", Consolas, monospace;
+}
+
+input {
+  padding: 12px 13px;
+  font: inherit;
+}
+
+.input-label {
+  display: block;
+  margin: 14px 0 6px;
+  color: #65685f;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.text-button {
+  padding: 4px;
+  color: #be5734;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.run-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 14px;
+  padding: 13px 15px;
+  border-radius: 12px;
+  color: #fffaf0;
+  background: #252821;
+  font-weight: 750;
+}
+
+.run-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.shortcut {
+  padding: 2px 7px;
+  border: 1px solid #62665c;
+  border-radius: 6px;
+  color: #cfd2c7;
+  font: 0.68rem "SFMono-Regular", Consolas, monospace;
+}
+
+.status {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.status.idle {
+  color: #6a6d64;
+  background: #ebe8de;
+}
+
+.status.running {
+  color: #805b12;
+  background: #f7e5b5;
+}
+
+.status.success {
+  color: #2c683e;
+  background: #dcebdc;
+}
+
+.status.failure {
+  color: #9b3d2b;
+  background: #f4dcd5;
+}
+
+.result-message {
+  margin: 12px 0 0;
+  color: #65685f;
+  font-size: 0.86rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.output-list {
+  display: grid;
+  gap: 8px;
+}
+
+.output-card {
+  overflow: hidden;
+  border: 1px solid #dfdbcf;
+  border-radius: 10px;
+  background: #f8f6ef;
+}
+
+.output-heading {
+  padding: 8px 10px;
+  border-bottom: 1px solid #dfdbcf;
+  font-size: 0.78rem;
+}
+
+.output-heading span {
+  color: #55705b;
+  font-size: 0.68rem;
+}
+
+pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 0.74rem/1.5 "SFMono-Regular", Consolas, monospace;
+}
+
+.audit-list {
+  margin: 0;
+  padding-left: 22px;
+  color: #53574f;
+  font: 0.72rem/1.7 "SFMono-Regular", Consolas, monospace;
+}
+
+.diagnostic {
+  color: #a23f2c;
+}
+
+@media (min-width: 680px) {
+  .app-shell {
+    padding-right: 28px;
+    padding-left: 28px;
+  }
+
+  .panel {
+    padding: 20px;
+  }
+}
