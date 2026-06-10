@@ -19,3 +19,15 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# grpc-netty-shaded supports optional desktop logging and TLS providers that
+# are not used by the insecure localhost Android server.
+-dontwarn com.google.j2objc.annotations.ReflectionSupport
+-dontwarn org.apache.log4j.**
+-dontwarn org.apache.logging.log4j.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.conscrypt.**
+-dontwarn org.eclipse.jetty.alpn.**
+-dontwarn org.eclipse.jetty.npn.**
+-dontwarn org.slf4j.**
+-dontwarn reactor.blockhound.integration.BlockHoundIntegration

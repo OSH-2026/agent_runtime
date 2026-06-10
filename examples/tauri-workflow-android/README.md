@@ -15,8 +15,12 @@
 当 workflow 或 subagent 生成的工具调用需要确认时，界面会显示 action、风险等级和
 输入参数。用户允许后从 `WaitingHuman` 状态继续执行，拒绝则取消本次 workflow。
 
-其余 Action 名会被视为 Kotlin 远程 Action。gRPC endpoint 默认是
-`127.0.0.1:8080`，适用于 Tauri App 与 Kotlin server 运行在同一台 Android 设备的情况。
+其余 Action 名会被视为 Kotlin 远程 Action。Android 构建已将
+`kotlin-actions-runtime` 作为 library 嵌入同一个 APK，Tauri `MainActivity` 启动时会自动
+启动内置 `ActionRuntimeService`。gRPC endpoint 默认保持为 `127.0.0.1:8080`，不再需要
+单独安装或手动切换到 Action Runtime App。
+
+调试前应停止或卸载旧的独立 Action Runtime App，避免它继续占用本机 `8080` 端口。
 
 ## 安装与运行
 
