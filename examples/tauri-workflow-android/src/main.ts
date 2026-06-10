@@ -28,26 +28,14 @@ steps:
     action: subagent
     inputs:
       prompt: "请将以下设备硬件信息总结成一段简洁中文，不要输出 YAML：\${device}"
-      model: "local-model"
-      base_url: "http://10.0.2.2:8080"
-      max_turns: 2
-      temperature: 0.2
   - id: system_summary
     action: subagent
     inputs:
       prompt: "请将以下系统与存储信息总结成一段简洁中文，不要输出 YAML。系统：\${system}；存储：\${storage}"
-      model: "local-model"
-      base_url: "http://10.0.2.2:8080"
-      max_turns: 2
-      temperature: 0.2
   - id: status_summary
     action: subagent
     inputs:
       prompt: "请将以下网络与电源状态总结成一段简洁中文，不要输出 YAML。网络：\${network}；电源：\${power}"
-      model: "local-model"
-      base_url: "http://10.0.2.2:8080"
-      max_turns: 2
-      temperature: 0.2
   - id: report
     action: text
     inputs:

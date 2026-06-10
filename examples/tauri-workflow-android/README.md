@@ -8,6 +8,8 @@
 
 - `text`：返回输入中的 `value` 文本。
 - `uppercase`：将输入中的 `text` 转为大写。
+- `subagent`：接收 `prompt` 并调用预配置的本地模型；模型地址、模型名和生成参数由
+  Tauri 后端固定，不能由 workflow 覆盖。
 
 其余 Action 名会被视为 Kotlin 远程 Action。gRPC endpoint 默认是
 `127.0.0.1:8080`，适用于 Tauri App 与 Kotlin server 运行在同一台 Android 设备的情况。

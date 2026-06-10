@@ -1,5 +1,5 @@
-use crate::types::{ActionError, ActionInput, ActionOutput};
 use crate::Action;
+use crate::types::{ActionError, ActionInput, ActionOutput};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -14,19 +14,19 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
 const MAX_REQUEST_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SubagentInput {
     pub prompt: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubagentConfig {
     pub model: String,
     pub base_url: String,
-    #[serde(default)]
     pub api_key: Option<String>,
-    #[serde(default)]
     pub max_turns: u32,
-    #[serde(default)]
     pub temperature: f32,
-    #[serde(default)]
     pub request_timeout_ms: u64,
-    #[serde(default)]
     pub system_prompt: Option<String>,
 }
 
@@ -65,16 +65,18 @@ pub trait ToolExecutor: Send + Sync {
 pub struct SubagentAction {
     executor: Arc<dyn ToolExecutor>,
     http: Client,
+    config: SubagentConfig,
 }
 
 impl SubagentAction {
-    pub fn new(executor: Arc<dyn ToolExecutor>) -> Self {
+    pub fn new(executor: Arc<dyn ToolExecutor>, config: SubagentConfig) -> Self {
         Self {
             executor,
             http: Client::builder()
                 .timeout(Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS))
                 .build()
                 .expect("default HTTP client configuration must be valid"),
+            config,
         }
     }
 }
@@ -104,20 +106,25 @@ impl SubagentAction {
         };
         let req: SubagentInput = serde_json::from_slice(&payload)
             .map_err(|err| ActionError::new_with("INVALID_INPUT", err.to_string(), false))?;
-        if req.prompt.trim().is_empty()
-            || req.model.trim().is_empty()
-            || req.base_url.trim().is_empty()
-        {
+        if req.prompt.trim().is_empty() {
             return Err(ActionError::new_with(
                 "INVALID_INPUT",
-                "prompt, model, and base_url must not be empty",
+                "prompt must not be empty",
+                false,
+            ));
+        }
+        if self.config.model.trim().is_empty() || self.config.base_url.trim().is_empty() {
+            return Err(ActionError::new_with(
+                "INVALID_CONFIG",
+                "subagent model and base_url must not be empty",
                 false,
             ));
         }
         let mut history = Vec::new();
         history.push(ChatMessage {
             role: "system".to_string(),
-            content: req
+            content: self
+                .config
                 .system_prompt
                 .clone()
                 .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
@@ -129,13 +136,13 @@ impl SubagentAction {
             name: None,
         });
 
-        let max_turns = if req.max_turns == 0 {
+        let max_turns = if self.config.max_turns == 0 {
             DEFAULT_MAX_TURNS
         } else {
-            req.max_turns.min(MAX_TURNS)
+            self.config.max_turns.min(MAX_TURNS)
         };
         for _ in 0..max_turns {
-            let assistant = self.call_llm(&req, &history).await?;
+            let assistant = self.call_llm(&history).await?;
             history.push(assistant.clone());
 
             if let Some(yaml) = extract_yaml(&assistant.content) {
@@ -169,30 +176,26 @@ impl SubagentAction {
         ))
     }
 
-    async fn call_llm(
-        &self,
-        req: &SubagentInput,
-        history: &[ChatMessage],
-    ) -> Result<ChatMessage, ActionError> {
-        let endpoint = normalize_chat_endpoint(&req.base_url);
+    async fn call_llm(&self, history: &[ChatMessage]) -> Result<ChatMessage, ActionError> {
+        let endpoint = normalize_chat_endpoint(&self.config.base_url);
         let mut request = self.http.post(endpoint).json(&ChatRequest {
-            model: req.model.clone(),
+            model: self.config.model.clone(),
             messages: history.to_vec(),
-            temperature: if req.temperature > 0.0 {
-                Some(req.temperature)
+            temperature: if self.config.temperature > 0.0 {
+                Some(self.config.temperature)
             } else {
                 None
             },
         });
-        if let Some(key) = &req.api_key {
+        if let Some(key) = &self.config.api_key {
             if !key.trim().is_empty() {
                 request = request.bearer_auth(key);
             }
         }
-        let request_timeout_ms = if req.request_timeout_ms == 0 {
+        let request_timeout_ms = if self.config.request_timeout_ms == 0 {
             DEFAULT_REQUEST_TIMEOUT_MS
         } else {
-            req.request_timeout_ms.min(MAX_REQUEST_TIMEOUT_MS)
+            self.config.request_timeout_ms.min(MAX_REQUEST_TIMEOUT_MS)
         };
         let response: ChatResponse = request
             .timeout(Duration::from_millis(request_timeout_ms))
@@ -258,11 +261,24 @@ fn extract_fenced_yaml(content: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_yaml;
+    use super::{SubagentInput, extract_yaml};
 
     #[test]
     fn extracts_fenced_yaml() {
         let yaml = extract_yaml("```yaml\nversion: 1\nsteps: []\n```").expect("yaml expected");
         assert_eq!(yaml, "version: 1\nsteps: []");
+    }
+
+    #[test]
+    fn subagent_input_only_accepts_prompt() {
+        let input: SubagentInput =
+            serde_json::from_str(r#"{"prompt":"hello"}"#).expect("prompt should be accepted");
+        assert_eq!(input.prompt, "hello");
+
+        let error = serde_json::from_str::<SubagentInput>(
+            r#"{"prompt":"hello","model":"workflow-controlled"}"#,
+        )
+        .expect_err("configuration fields must be rejected");
+        assert!(error.to_string().contains("unknown field `model`"));
     }
 }

@@ -1,14 +1,15 @@
-use actions::catalog::{metadata_for_action, ANDROID_ACTION_NAMES};
+use actions::catalog::{ANDROID_ACTION_NAMES, metadata_for_action};
 use actions::client::{GrpcClient, RemoteAction};
 use actions::{
-    Action, ActionError, ActionInput, ActionOutput, ActionRegistry, SubagentAction, ToolExecutor,
+    Action, ActionError, ActionInput, ActionOutput, ActionRegistry, SubagentAction, SubagentConfig,
+    ToolExecutor,
 };
 use async_trait::async_trait;
 use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use dispatcher::{
-    apply_action_metadata, load_action_flow_from_str, ActionExecutor, ActionRegistryFactory,
-    DispatcherToolExecutor, Engine, ExecutionContext, GlobalState, InMemoryAuditLog,
-    InMemoryStateStore, NodeState, SimpleRecovery,
+    ActionExecutor, ActionRegistryFactory, DispatcherToolExecutor, Engine, ExecutionContext,
+    GlobalState, InMemoryAuditLog, InMemoryStateStore, NodeState, SimpleRecovery,
+    apply_action_metadata, load_action_flow_from_str,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -60,7 +61,18 @@ impl ActionRegistryFactory for TauriRegistryFactory {
         );
         registry.register_local_with_metadata(
             "subagent",
-            Arc::new(SubagentAction::new(tools)),
+            Arc::new(SubagentAction::new(
+                tools,
+                SubagentConfig {
+                    model: "local-model".to_string(),
+                    base_url: "http://10.0.2.2:8080".to_string(),
+                    api_key: None,
+                    max_turns: 2,
+                    temperature: 0.2,
+                    request_timeout_ms: 60_000,
+                    system_prompt: None,
+                },
+            )),
             required_metadata("subagent").map_err(ActionError::new)?,
         );
         for action_name in ANDROID_ACTION_NAMES {

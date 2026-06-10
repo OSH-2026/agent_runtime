@@ -122,7 +122,7 @@ intent_create_note({title?:string="", text?:string=""}) -> LaunchResult
 ```text
 text({value:string}) -> plain text
 uppercase({text:string}) -> uppercase plain text
-subagent({prompt:string, model:string, base_url:string, api_key?:string, max_turns?:int, temperature?:float, request_timeout_ms?:long, system_prompt?:string}) -> plain text
+subagent({prompt:string}) -> plain text
 ```
 
 ## 输出结构
