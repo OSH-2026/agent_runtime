@@ -9,7 +9,7 @@
 
 两条技术线共同构成“本地模型负责规划与生成，Action Fabric 负责可靠执行”的端侧 Agent Runtime 技术栈。当前仓库包含 Action Fabric 的完整工程实现；端侧 LLM 推理框架位于独立仓库。
 
-> 端侧 LLM 仓库：[项目仓库链接](https://github.com/PLACEHOLDER/edge-llm-runtime)](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
+> 端侧 LLM 仓库：[项目仓库链接](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
 
 ## 项目成果
 
