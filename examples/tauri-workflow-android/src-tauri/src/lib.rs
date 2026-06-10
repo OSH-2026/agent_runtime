@@ -1,4 +1,5 @@
 use actions::client::{GrpcClient, RemoteAction};
+use actions::catalog::metadata_for_action;
 use actions::{Action, ActionInput, ActionOutput, ActionRegistry};
 use async_trait::async_trait;
 use dispatcher::scheduler::{Dispatcher, TopoPolicy};
@@ -102,9 +103,21 @@ async fn run_workflow(
         .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
     let mut registry = ActionRegistry::default();
-    registry.register_local("echo", Arc::new(EchoAction));
-    registry.register_local("text", Arc::new(TextAction));
-    registry.register_local("uppercase", Arc::new(UppercaseAction));
+    registry.register_local_with_metadata(
+        "echo",
+        Arc::new(EchoAction),
+        required_metadata("echo")?,
+    );
+    registry.register_local_with_metadata(
+        "text",
+        Arc::new(TextAction),
+        required_metadata("text")?,
+    );
+    registry.register_local_with_metadata(
+        "uppercase",
+        Arc::new(UppercaseAction),
+        required_metadata("uppercase")?,
+    );
     let remote_actions = plan
         .nodes
         .values()
@@ -114,9 +127,11 @@ async fn run_workflow(
         .collect::<BTreeSet<_>>();
     let grpc_client = GrpcClient::new(grpc_endpoint);
     for action_name in remote_actions {
-        registry.register_remote(
+        let metadata = required_metadata(&action_name)?;
+        registry.register_remote_with_metadata(
             action_name.clone(),
             RemoteAction::from_grpc(grpc_client.clone(), action_name),
+            metadata,
         );
     }
     let registry = Arc::new(registry);
@@ -188,6 +203,11 @@ async fn run_workflow(
         audit,
         diagnostics,
     })
+}
+
+fn required_metadata(action_name: &str) -> Result<actions::ActionMetadata, String> {
+    metadata_for_action(action_name)
+        .ok_or_else(|| format!("action is not present in the trusted catalog: {action_name}"))
 }
 
 fn state_name(state: NodeState) -> &'static str {
