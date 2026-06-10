@@ -4,8 +4,9 @@ use actions::{
     ActionRequest, ActionResponse, ActionRisk, ActionSideEffect, ToolExecutor,
 };
 use async_trait::async_trait;
-use dispatcher::DispatcherToolExecutor;
+use dispatcher::{ActionRegistryFactory, DispatcherToolExecutor};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct MockGrpcClient;
@@ -81,6 +82,20 @@ impl Action for FailingAction {
     }
 }
 
+struct TestRegistryFactory {
+    build: fn(Arc<dyn ToolExecutor>) -> ActionRegistry,
+}
+
+impl ActionRegistryFactory for TestRegistryFactory {
+    fn create_registry(&self, tools: Arc<dyn ToolExecutor>) -> Result<ActionRegistry, ActionError> {
+        Ok((self.build)(tools))
+    }
+}
+
+fn executor(build: fn(Arc<dyn ToolExecutor>) -> ActionRegistry) -> DispatcherToolExecutor {
+    DispatcherToolExecutor::new(Arc::new(TestRegistryFactory { build }))
+}
+
 #[tokio::test]
 async fn dispatcher_runs_workflow_with_kotlin_and_subagent() {
     let yaml = r#"
@@ -106,23 +121,7 @@ steps:
       right: "${C}"
 "#;
 
-    let mut registry = ActionRegistry::default();
-    registry.register_local_with_metadata("echo", Arc::new(EchoAction), safe_metadata());
-    registry.register_local_with_metadata("merge", Arc::new(MergeAction), safe_metadata());
-    registry.register_local_with_metadata(
-        "subagent",
-        Arc::new(MockSubagentAction),
-        safe_metadata(),
-    );
-
-    let grpc = Arc::new(MockGrpcClient);
-    registry.register_remote_with_metadata(
-        "kotlin_echo",
-        RemoteAction::new(grpc, "kotlin_echo"),
-        safe_metadata(),
-    );
-
-    let executor = DispatcherToolExecutor::new(Arc::new(registry));
+    let executor = executor(full_registry);
     let output = executor.execute_yaml(yaml).await.expect("execution failed");
 
     assert_eq!(output, "kotlin:hello|subagent:agent kotlin:hello");
@@ -137,10 +136,7 @@ steps:
   - id: A
     action: echo
 "#;
-    let mut registry = ActionRegistry::default();
-    registry.register_local("echo", Arc::new(EchoAction));
-
-    let error = DispatcherToolExecutor::new(Arc::new(registry))
+    let error = executor(untrusted_registry)
         .execute_yaml(yaml)
         .await
         .expect_err("untrusted action should be rejected");
@@ -157,10 +153,7 @@ steps:
   - id: A
     action: fail
 "#;
-    let mut registry = ActionRegistry::default();
-    registry.register_local_with_metadata("fail", Arc::new(FailingAction), safe_metadata());
-
-    let error = DispatcherToolExecutor::new(Arc::new(registry))
+    let error = executor(failing_registry)
         .execute_yaml(yaml)
         .await
         .expect_err("workflow should fail");
@@ -182,10 +175,7 @@ steps:
       riskLevel: low
       requiresConfirmation: false
 "#;
-    let mut registry = ActionRegistry::default();
-    registry.register_local_with_metadata("confirm", Arc::new(EchoAction), safe_metadata());
-
-    let error = DispatcherToolExecutor::new(Arc::new(registry))
+    let error = executor(confirm_registry)
         .execute_yaml(yaml)
         .await
         .expect_err("generated policy should be rejected");
@@ -193,6 +183,111 @@ steps:
     assert_eq!(error.code, "POLICY_NOT_ALLOWED");
     assert!(error.message.contains("steps[0]"));
     assert!(error.message.contains("action metadata"));
+}
+
+struct RecursiveAction {
+    tools: Arc<dyn ToolExecutor>,
+}
+
+#[async_trait]
+impl Action for RecursiveAction {
+    async fn execute(&self, _input: ActionInput) -> ActionOutput {
+        let yaml = r#"
+version: 1
+id: inner
+steps:
+  - id: result
+    action: echo
+    inputs:
+      payload: "nested"
+"#;
+        match self.tools.execute_yaml(yaml).await {
+            Ok(output) => ActionOutput {
+                payload: output.into_bytes(),
+                error: None,
+            },
+            Err(error) => ActionOutput {
+                payload: Vec::new(),
+                error: Some(error),
+            },
+        }
+    }
+}
+
+struct RecursiveRegistryFactory {
+    creations: Arc<AtomicUsize>,
+}
+
+impl ActionRegistryFactory for RecursiveRegistryFactory {
+    fn create_registry(&self, tools: Arc<dyn ToolExecutor>) -> Result<ActionRegistry, ActionError> {
+        self.creations.fetch_add(1, Ordering::SeqCst);
+        let mut registry = ActionRegistry::default();
+        registry.register_local_with_metadata("echo", Arc::new(EchoAction), safe_metadata());
+        registry.register_local_with_metadata(
+            "recurse",
+            Arc::new(RecursiveAction { tools }),
+            safe_metadata(),
+        );
+        Ok(registry)
+    }
+}
+
+#[tokio::test]
+async fn recursive_tools_create_an_independent_registry_per_level() {
+    let yaml = r#"
+version: 1
+id: outer
+steps:
+  - id: result
+    action: recurse
+"#;
+    let creations = Arc::new(AtomicUsize::new(0));
+    let factory = Arc::new(RecursiveRegistryFactory {
+        creations: Arc::clone(&creations),
+    });
+
+    let output = DispatcherToolExecutor::new(factory)
+        .execute_yaml(yaml)
+        .await
+        .expect("recursive execution should succeed");
+
+    assert_eq!(output, "nested");
+    assert_eq!(creations.load(Ordering::SeqCst), 2);
+}
+
+fn full_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
+    let mut registry = ActionRegistry::default();
+    registry.register_local_with_metadata("echo", Arc::new(EchoAction), safe_metadata());
+    registry.register_local_with_metadata("merge", Arc::new(MergeAction), safe_metadata());
+    registry.register_local_with_metadata(
+        "subagent",
+        Arc::new(MockSubagentAction),
+        safe_metadata(),
+    );
+    registry.register_remote_with_metadata(
+        "kotlin_echo",
+        RemoteAction::new(Arc::new(MockGrpcClient), "kotlin_echo"),
+        safe_metadata(),
+    );
+    registry
+}
+
+fn untrusted_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
+    let mut registry = ActionRegistry::default();
+    registry.register_local("echo", Arc::new(EchoAction));
+    registry
+}
+
+fn failing_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
+    let mut registry = ActionRegistry::default();
+    registry.register_local_with_metadata("fail", Arc::new(FailingAction), safe_metadata());
+    registry
+}
+
+fn confirm_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
+    let mut registry = ActionRegistry::default();
+    registry.register_local_with_metadata("confirm", Arc::new(EchoAction), safe_metadata());
+    registry
 }
 
 fn safe_metadata() -> ActionMetadata {

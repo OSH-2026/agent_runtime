@@ -120,9 +120,9 @@ intent_create_note({title?:string="", text?:string=""}) -> LaunchResult
 这些 action 只由当前 Tauri workflow demo 本地提供，不属于 Kotlin Android Runtime。
 
 ```text
-echo(any JSON or workflow input) -> unchanged payload
 text({value:string}) -> plain text
 uppercase({text:string}) -> uppercase plain text
+subagent({prompt:string, model:string, base_url:string, api_key?:string, max_turns?:int, temperature?:float, request_timeout_ms?:long, system_prompt?:string}) -> plain text
 ```
 
 ## 输出结构

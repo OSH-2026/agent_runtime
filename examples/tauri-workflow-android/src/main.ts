@@ -1,16 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 
 const sampleWorkflow = `version: 1
-id: device-overview
-globals:
-  defaults:
-    retryBudget: 1
-    timeoutMs: 10000
+id: device-summary-report
+output: report
 steps:
   - id: device
     action: device_info
     inputs:
       includeHardware: true
+  - id: system
+    action: system_info
+    inputs:
+      includeStorage: true
   - id: network
     action: network_status
     inputs:
@@ -19,7 +20,44 @@ steps:
     action: power_status
     inputs:
       includeDetails: true
-outputContract: json
+  - id: storage
+    action: storage_info
+    inputs:
+      includeExternal: true
+  - id: device_summary
+    action: subagent
+    inputs:
+      prompt: "请将以下设备硬件信息总结成一段简洁中文，不要输出 YAML：\${device}"
+      model: "local-model"
+      base_url: "http://10.0.2.2:8080"
+      max_turns: 2
+      temperature: 0.2
+  - id: system_summary
+    action: subagent
+    inputs:
+      prompt: "请将以下系统与存储信息总结成一段简洁中文，不要输出 YAML。系统：\${system}；存储：\${storage}"
+      model: "local-model"
+      base_url: "http://10.0.2.2:8080"
+      max_turns: 2
+      temperature: 0.2
+  - id: status_summary
+    action: subagent
+    inputs:
+      prompt: "请将以下网络与电源状态总结成一段简洁中文，不要输出 YAML。网络：\${network}；电源：\${power}"
+      model: "local-model"
+      base_url: "http://10.0.2.2:8080"
+      max_turns: 2
+      temperature: 0.2
+  - id: report
+    action: text
+    inputs:
+      value: |
+        \${device_summary}
+
+        \${system_summary}
+
+        \${status_summary}
+outputContract: text
 `;
 
 interface AuditEntry {

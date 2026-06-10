@@ -6,7 +6,6 @@
 
 内置本地 Action：
 
-- `echo`：原样返回节点输入的 JSON。
 - `text`：返回输入中的 `value` 文本。
 - `uppercase`：将输入中的 `text` 转为大写。
 

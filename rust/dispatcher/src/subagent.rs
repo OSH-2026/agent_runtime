@@ -5,7 +5,7 @@ use serde_yaml::{self, Value};
 use std::sync::Arc;
 
 use crate::executor::ActionExecutor;
-use crate::loader::{ActionFlowFile, load_action_flow_from_str};
+use crate::loader::{load_action_flow_from_str, ActionFlowFile};
 use crate::plan::SideEffectLevel;
 use crate::policy::RiskLevel;
 use crate::recovery::SimpleRecovery;
@@ -14,25 +14,32 @@ use crate::scheduler::{Dispatcher, TopoPolicy};
 use crate::state::{GlobalState, NodeState};
 use crate::storage::{InMemoryAuditLog, InMemoryStateStore};
 use crate::{DispatcherError, PlanError};
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 
 const MAX_TOOL_STEPS: usize = 32;
 const MAX_TOOL_OUTPUT_BYTES: usize = 1024 * 1024;
 
+pub trait ActionRegistryFactory: Send + Sync {
+    fn create_registry(&self, tools: Arc<dyn ToolExecutor>) -> Result<ActionRegistry, ActionError>;
+}
+
 pub struct DispatcherToolExecutor {
-    registry: Arc<ActionRegistry>,
+    factory: Arc<dyn ActionRegistryFactory>,
 }
 
 impl DispatcherToolExecutor {
-    pub fn new(registry: Arc<ActionRegistry>) -> Self {
-        Self { registry }
+    pub fn new(factory: Arc<dyn ActionRegistryFactory>) -> Self {
+        Self { factory }
     }
 }
 
 #[async_trait]
 impl ToolExecutor for DispatcherToolExecutor {
     async fn execute_yaml(&self, yaml: &str) -> Result<String, ActionError> {
+        let recursive_tools: Arc<dyn ToolExecutor> =
+            Arc::new(DispatcherToolExecutor::new(Arc::clone(&self.factory)));
+        let registry = Arc::new(self.factory.create_registry(recursive_tools)?);
         let raw_flow: Value = serde_yaml::from_str(yaml)
             .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
         reject_subagent_policy_fields(&raw_flow)?;
@@ -55,19 +62,16 @@ impl ToolExecutor for DispatcherToolExecutor {
 
         let mut plan = load_action_flow_from_str(yaml).map_err(to_action_error)?;
         for node in plan.nodes.values_mut() {
-            let metadata = self
-                .registry
-                .trusted_metadata(&node.action)
-                .ok_or_else(|| {
-                    ActionError::new_with(
-                        "UNTRUSTED_ACTION",
-                        format!(
-                            "action '{}' is not registered with trusted subagent metadata",
-                            node.action
-                        ),
-                        false,
-                    )
-                })?;
+            let metadata = registry.trusted_metadata(&node.action).ok_or_else(|| {
+                ActionError::new_with(
+                    "UNTRUSTED_ACTION",
+                    format!(
+                        "action '{}' is not registered with trusted subagent metadata",
+                        node.action
+                    ),
+                    false,
+                )
+            })?;
             if !metadata.callable_by_subagent {
                 return Err(ActionError::new_with(
                     "ACTION_NOT_ALLOWED",
@@ -75,11 +79,11 @@ impl ToolExecutor for DispatcherToolExecutor {
                     false,
                 ));
             }
-            apply_trusted_metadata(node, metadata);
+            apply_action_metadata(node, metadata);
         }
 
         let plan = Arc::new(plan);
-        let executor = ActionExecutor::new(Arc::clone(&self.registry), Arc::clone(&plan));
+        let executor = ActionExecutor::new(Arc::clone(&registry), Arc::clone(&plan));
         let output_reader = executor.clone();
         let mut engine = Engine {
             plan: (*plan).clone(),
@@ -194,7 +198,7 @@ fn reject_policy_mapping(value: &Value, location: &str) -> Result<(), ActionErro
     Ok(())
 }
 
-fn apply_trusted_metadata(node: &mut crate::plan::Node, metadata: &ActionMetadata) {
+pub fn apply_action_metadata(node: &mut crate::plan::Node, metadata: &ActionMetadata) {
     node.config.side_effect = match metadata.side_effect {
         ActionSideEffect::Pure => SideEffectLevel::Pure,
         ActionSideEffect::Idempotent => SideEffectLevel::Idempotent,

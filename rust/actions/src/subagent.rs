@@ -1,5 +1,5 @@
-use crate::Action;
 use crate::types::{ActionError, ActionInput, ActionOutput};
+use crate::Action;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a subagent that can call tools by emitting YAML action flows.\n\nWhen you need a tool, respond with a YAML action flow using this schema:\n\nversion: 1\nid: demo\noutput: B\nsteps:\n  - id: A\n    action: echo\n    inputs:\n      payload: \"hello\"\n  - id: B\n    action: echo\n    inputs:\n      payload: \"${A}\"\n\nOnly output the YAML block when requesting tools. Tool results are JSON objects with ok, output, code, message, and retryable fields. Do not include execution policy fields in tool YAML; policies are supplied by the trusted action registry.\n\nAny response that is not a YAML action flow is treated as the final answer.\n";
+const DEFAULT_SYSTEM_PROMPT: &str = "You are a subagent that can call tools by emitting YAML action flows.\n\nWhen you need a tool, respond with a YAML action flow using this schema:\n\nversion: 1\nid: demo\noutput: B\nsteps:\n  - id: A\n    action: text\n    inputs:\n      value: \"hello\"\n  - id: B\n    action: uppercase\n    inputs:\n      text: \"${A}\"\n\nOnly output the YAML block when requesting tools. Tool results are JSON objects with ok, output, code, message, and retryable fields. Do not include execution policy fields in tool YAML; policies are supplied by the trusted action registry.\n\nAny response that is not a YAML action flow is treated as the final answer.\n";
 const DEFAULT_MAX_TURNS: u32 = 8;
 const MAX_TURNS: u32 = 32;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;

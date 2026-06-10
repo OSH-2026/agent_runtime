@@ -15,11 +15,13 @@ pub mod subagent;
 pub use policy::{ActionPolicy, RiskLevel};
 
 pub use crate::error::{DispatcherError, PlanError};
-pub use crate::loader::{load_action_flow_from_str, ActionFlowFile};
 pub use crate::executor::{ActionExecutor, ExecutionResult, Executor, Outcome};
+pub use crate::loader::{load_action_flow_from_str, ActionFlowFile};
 pub use crate::plan::{Contract, Edge, ExecutionPlan, Node, NodeConfig, NodeId, SideEffectLevel};
 pub use crate::recovery::{RecoveryAction, RecoveryLevel, RecoveryStrategy, SimpleRecovery};
 pub use crate::runtime::{DiagnosticContext, Engine, ExecutionContext};
-pub use crate::storage::{AuditEvent, AuditLog, InMemoryAuditLog, InMemoryStateStore, StateStore};
 pub use crate::state::{GlobalState, NodeState, Transition};
-pub use crate::subagent::DispatcherToolExecutor;
+pub use crate::storage::{AuditEvent, AuditLog, InMemoryAuditLog, InMemoryStateStore, StateStore};
+pub use crate::subagent::{
+    apply_action_metadata, ActionRegistryFactory, DispatcherToolExecutor,
+};

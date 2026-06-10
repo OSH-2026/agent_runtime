@@ -62,25 +62,31 @@ pub const ANDROID_ACTION_NAMES: &[&str] = &[
     "intent_create_note",
 ];
 
-pub const TAURI_LOCAL_ACTION_NAMES: &[&str] = &["echo", "text", "uppercase"];
+pub const TAURI_LOCAL_ACTION_NAMES: &[&str] = &["text", "uppercase", "subagent"];
 
 pub fn metadata_for_action(name: &str) -> Option<ActionMetadata> {
     let metadata = match name {
-        "device_info" | "system_info" | "network_status" | "power_status" | "storage_info"
-        | "list_installed_apps" | "check_permissions" | "media_now_playing" => {
-            read_only(ActionRisk::Low, 10_000, false)
-        }
-        "get_location" | "foreground_app" | "read_sms" | "read_call_log"
-        | "search_contacts" | "list_notifications" | "clipboard_read"
-        | "list_calendar_events" | "read_file" => {
-            read_only(ActionRisk::High, 15_000, true)
-        }
+        "device_info"
+        | "system_info"
+        | "network_status"
+        | "power_status"
+        | "storage_info"
+        | "list_installed_apps"
+        | "check_permissions"
+        | "media_now_playing" => read_only(ActionRisk::Low, 10_000, false),
+        "get_location"
+        | "foreground_app"
+        | "read_sms"
+        | "read_call_log"
+        | "search_contacts"
+        | "list_notifications"
+        | "clipboard_read"
+        | "list_calendar_events"
+        | "read_file" => read_only(ActionRisk::High, 15_000, true),
         "search_files" => read_only(ActionRisk::Medium, 15_000, false),
         "http_call" | "open_webpage" => idempotent(ActionRisk::High, 20_000, true),
         "set_volume" | "set_silent_mode" | "wifi_toggle" | "bluetooth_toggle"
-        | "media_play_pause" | "clipboard_copy" => {
-            idempotent(ActionRisk::Medium, 10_000, false)
-        }
+        | "media_play_pause" | "clipboard_copy" => idempotent(ActionRisk::Medium, 10_000, false),
         "launch_app" | "set_alarm" | "set_timer" | "list_alarms" | "select_file" => {
             interactive(ActionRisk::Medium, 30_000)
         }
@@ -109,7 +115,8 @@ pub fn metadata_for_action(name: &str) -> Option<ActionMetadata> {
         | "intent_play_media"
         | "intent_play_search"
         | "intent_create_note" => interactive(ActionRisk::High, 60_000),
-        "echo" | "text" | "uppercase" => read_only(ActionRisk::Low, 5_000, false),
+        "text" | "uppercase" => read_only(ActionRisk::Low, 5_000, false),
+        "subagent" => idempotent(ActionRisk::High, 120_000, false),
         _ => return None,
     };
     Some(metadata)
@@ -165,7 +172,7 @@ fn evidence_capture(timeout_ms: u64) -> ActionMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::{ANDROID_ACTION_NAMES, TAURI_LOCAL_ACTION_NAMES, metadata_for_action};
+    use super::{metadata_for_action, ANDROID_ACTION_NAMES, TAURI_LOCAL_ACTION_NAMES};
     use std::collections::HashSet;
 
     const BUILTIN_REGISTRAR: &str = include_str!(
