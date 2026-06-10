@@ -28,6 +28,7 @@ pub struct SubagentConfig {
     pub temperature: f32,
     pub request_timeout_ms: u64,
     pub system_prompt: Option<String>,
+    pub action_catalog: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,11 +124,7 @@ impl SubagentAction {
         let mut history = Vec::new();
         history.push(ChatMessage {
             role: "system".to_string(),
-            content: self
-                .config
-                .system_prompt
-                .clone()
-                .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
+            content: build_system_prompt(&self.config),
             name: None,
         });
         history.push(ChatMessage {
@@ -221,6 +218,21 @@ impl SubagentAction {
     }
 }
 
+fn build_system_prompt(config: &SubagentConfig) -> String {
+    let base = config
+        .system_prompt
+        .as_deref()
+        .unwrap_or(DEFAULT_SYSTEM_PROMPT)
+        .trim();
+    let catalog = config.action_catalog.trim();
+    if catalog.is_empty() {
+        return base.to_string();
+    }
+    format!(
+        "{base}\n\nThe following action catalog is authoritative. Only call actions and use input fields listed here:\n\n{catalog}"
+    )
+}
+
 fn normalize_chat_endpoint(base: &str) -> String {
     let trimmed = base.trim_end_matches('/');
     if trimmed.ends_with("/v1/chat/completions") {
@@ -261,7 +273,20 @@ fn extract_fenced_yaml(content: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SubagentInput, extract_yaml};
+    use super::{SubagentConfig, SubagentInput, build_system_prompt, extract_yaml};
+
+    fn config(system_prompt: Option<&str>, action_catalog: &str) -> SubagentConfig {
+        SubagentConfig {
+            model: "test-model".to_string(),
+            base_url: "http://localhost:8080".to_string(),
+            api_key: None,
+            max_turns: 2,
+            temperature: 0.2,
+            request_timeout_ms: 1_000,
+            system_prompt: system_prompt.map(str::to_string),
+            action_catalog: action_catalog.to_string(),
+        }
+    }
 
     #[test]
     fn extracts_fenced_yaml() {
@@ -280,5 +305,27 @@ mod tests {
         )
         .expect_err("configuration fields must be rejected");
         assert!(error.to_string().contains("unknown field `model`"));
+    }
+
+    #[test]
+    fn system_prompt_includes_action_catalog() {
+        let prompt = build_system_prompt(&config(
+            None,
+            "device_info({includeHardware?:bool=true}) -> DeviceInfoOutput",
+        ));
+
+        assert!(prompt.contains("Only call actions and use input fields listed here"));
+        assert!(prompt.contains("device_info({includeHardware?:bool=true})"));
+    }
+
+    #[test]
+    fn custom_system_prompt_cannot_remove_action_catalog() {
+        let prompt = build_system_prompt(&config(
+            Some("Answer in Chinese."),
+            "network_status({includeDetails?:bool=true}) -> NetworkStatusOutput",
+        ));
+
+        assert!(prompt.starts_with("Answer in Chinese."));
+        assert!(prompt.contains("network_status({includeDetails?:bool=true})"));
     }
 }

@@ -16,6 +16,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+const ACTION_CATALOG_DOCUMENT: &str =
+    include_str!("../../../../docs/action_fabric/action-catalog-for-llm.md");
+
 struct TextAction;
 
 #[async_trait]
@@ -71,6 +74,7 @@ impl ActionRegistryFactory for TauriRegistryFactory {
                     temperature: 0.2,
                     request_timeout_ms: 60_000,
                     system_prompt: None,
+                    action_catalog: subagent_action_catalog(),
                 },
             )),
             required_metadata("subagent").map_err(ActionError::new)?,
@@ -222,6 +226,14 @@ async fn run_workflow(
     })
 }
 
+fn subagent_action_catalog() -> String {
+    ACTION_CATALOG_DOCUMENT
+        .split_once("## 内置 Action（39）")
+        .and_then(|(_, actions)| actions.split_once("## 输出结构"))
+        .map(|(signatures, _)| signatures.trim().to_string())
+        .expect("action catalog document must contain the action signature sections")
+}
+
 fn required_metadata(action_name: &str) -> Result<actions::ActionMetadata, String> {
     metadata_for_action(action_name)
         .ok_or_else(|| format!("action is not present in the trusted catalog: {action_name}"))
@@ -285,5 +297,21 @@ steps:
         assert!(result.audit.iter().any(|entry| {
             entry.node_id == "result" && entry.from == "running" && entry.to == "executed"
         }));
+    }
+
+    #[test]
+    fn subagent_catalog_contains_every_registered_action_signature() {
+        let catalog = subagent_action_catalog();
+        for action_name in ANDROID_ACTION_NAMES
+            .iter()
+            .chain(["text", "uppercase", "subagent"].iter())
+        {
+            assert!(
+                catalog.contains(&format!("{action_name}(")),
+                "missing signature for {action_name}"
+            );
+        }
+        assert!(!catalog.contains("最终只输出可解析的 YAML"));
+        assert!(!catalog.contains("## 生成规则"));
     }
 }
