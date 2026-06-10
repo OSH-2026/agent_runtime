@@ -52,9 +52,10 @@ object SmokePermissionHelper {
         }
         openUsageAccessSettings(activity, context)
         openNotificationListenerSettings(activity, context)
+        openAccessibilitySettings(activity)
         Toast.makeText(
             activity,
-            "Grant Usage Stats, Notification access, and Exact alarms if prompted.",
+            "Enable Action Runtime screenshot service, plus the other requested access.",
             Toast.LENGTH_LONG,
         ).show()
     }
@@ -81,5 +82,9 @@ object SmokePermissionHelper {
         if (intent.resolveActivity(context.packageManager) != null) {
             activity.startActivity(intent)
         }
+    }
+
+    private fun openAccessibilitySettings(activity: Activity) {
+        activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 }

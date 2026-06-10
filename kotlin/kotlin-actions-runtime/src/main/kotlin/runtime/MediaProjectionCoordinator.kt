@@ -38,7 +38,11 @@ object MediaProjectionCoordinator {
                 }
             }
             val intent = Intent(context, MediaProjectionPermissionActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION,
+                )
             }
             context.startActivity(intent)
         }

@@ -1,0 +1,3 @@
+<resources>
+    <string name="action_runtime_screenshot_service_description">Allows Action Runtime to capture the current screen when requested.</string>
+</resources>

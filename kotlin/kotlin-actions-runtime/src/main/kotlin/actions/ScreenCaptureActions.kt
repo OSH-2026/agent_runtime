@@ -4,9 +4,12 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.MediaRecorder
+import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -16,6 +19,7 @@ import error.ActionException
 import error.ErrorCode
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -23,6 +27,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import runtime.ActionRuntimeService
+import runtime.ActionScreenshotAccessibilityService
 import runtime.MediaProjectionCoordinator
 import util.PermissionUtils
 
@@ -42,30 +48,63 @@ class ScreenshotAction : Action<ScreenshotInput, ScreenshotOutput> {
     override suspend fun execute(input: ScreenshotInput, ctx: ActionContext): ScreenshotOutput {
         val context = ctx.appContext
         return withContext(Dispatchers.IO) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                return@withContext withTimeout(input.timeoutMs) {
+                    val bitmap = ActionScreenshotAccessibilityService.capture()
+                    val file = File(context.cacheDir, "screenshot_${System.currentTimeMillis()}.png")
+                    try {
+                        FileOutputStream(file).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        ScreenshotOutput(
+                            path = file.absolutePath,
+                            width = bitmap.width,
+                            height = bitmap.height,
+                        )
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }
+            }
             val projection = requestProjection(context)
             val metrics = context.resources.displayMetrics
             val reader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
-            val display = projection.createVirtualDisplay(
-                "action_runtime_screenshot",
-                metrics.widthPixels,
-                metrics.heightPixels,
-                metrics.densityDpi,
-                0,
-                reader.surface,
-                null,
-                null,
-            )
-            val image = withTimeout(input.timeoutMs) { reader.awaitImage() }
-            val file = File(context.cacheDir, "screenshot_${System.currentTimeMillis()}.png")
-            val bitmap = imageToBitmap(image, metrics)
-            FileOutputStream(file).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            val resources = ScreenshotCaptureResources(reader)
+            var callbackRegistered = false
+            try {
+                projection.registerCallback(resources, Handler(Looper.getMainLooper()))
+                callbackRegistered = true
+                resources.attachDisplay(
+                    projection.createVirtualDisplay(
+                        "action_runtime_screenshot",
+                        metrics.widthPixels,
+                        metrics.heightPixels,
+                        metrics.densityDpi,
+                        0,
+                        reader.surface,
+                        null,
+                        null,
+                    ),
+                )
+                val file = File(context.cacheDir, "screenshot_${System.currentTimeMillis()}.png")
+                withTimeout(input.timeoutMs) { reader.awaitImage() }.use { image ->
+                    val bitmap = imageToBitmap(image, metrics)
+                    try {
+                        FileOutputStream(file).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }
+                ScreenshotOutput(path = file.absolutePath, width = metrics.widthPixels, height = metrics.heightPixels)
+            } finally {
+                resources.release()
+                if (callbackRegistered) {
+                    projection.unregisterCallback(resources)
+                }
+                projection.stop()
             }
-            image.close()
-            reader.close()
-            display.release()
-            projection.stop()
-            ScreenshotOutput(path = file.absolutePath, width = metrics.widthPixels, height = metrics.heightPixels)
         }
     }
 }
@@ -113,25 +152,113 @@ class ScreenRecordAction : Action<ScreenRecordInput, ScreenRecordOutput> {
                 recorder.setAudioSamplingRate(44_100)
             }
             recorder.prepare()
-            val display = projection.createVirtualDisplay(
-                "action_runtime_record",
-                metrics.widthPixels,
-                metrics.heightPixels,
-                metrics.densityDpi,
-                0,
-                recorder.surface,
-                null,
-                null,
-            )
-            recorder.start()
-            delay(input.durationSeconds * 1000L)
-            recorder.stop()
-            recorder.reset()
-            recorder.release()
-            display.release()
-            projection.stop()
-            ScreenRecordOutput(path = output.absolutePath, durationSeconds = input.durationSeconds)
+            val resources = ScreenRecordResources(recorder)
+            var callbackRegistered = false
+            try {
+                projection.registerCallback(resources, Handler(Looper.getMainLooper()))
+                callbackRegistered = true
+                resources.attachDisplay(
+                    projection.createVirtualDisplay(
+                        "action_runtime_record",
+                        metrics.widthPixels,
+                        metrics.heightPixels,
+                        metrics.densityDpi,
+                        0,
+                        recorder.surface,
+                        null,
+                        null,
+                    ),
+                )
+                resources.startRecorder()
+                delay(input.durationSeconds * 1000L)
+                ScreenRecordOutput(path = output.absolutePath, durationSeconds = input.durationSeconds)
+            } finally {
+                resources.release()
+                if (callbackRegistered) {
+                    projection.unregisterCallback(resources)
+                }
+                projection.stop()
+            }
         }
+    }
+}
+
+private class ScreenshotCaptureResources(
+    private val reader: ImageReader,
+) : MediaProjection.Callback() {
+    private val released = AtomicBoolean(false)
+
+    @Volatile
+    private var display: VirtualDisplay? = null
+
+    fun attachDisplay(value: VirtualDisplay) {
+        if (released.get()) {
+            value.release()
+            return
+        }
+        display = value
+        if (released.get()) {
+            display?.release()
+            display = null
+        }
+    }
+
+    override fun onStop() {
+        release()
+    }
+
+    fun release() {
+        if (!released.compareAndSet(false, true)) {
+            return
+        }
+        reader.setOnImageAvailableListener(null, null)
+        display?.release()
+        display = null
+        reader.close()
+    }
+}
+
+private class ScreenRecordResources(
+    private val recorder: MediaRecorder,
+) : MediaProjection.Callback() {
+    private var display: VirtualDisplay? = null
+    private var recorderStarted = false
+    private var released = false
+
+    @Synchronized
+    fun attachDisplay(value: VirtualDisplay) {
+        if (released) {
+            value.release()
+        } else {
+            display = value
+        }
+    }
+
+    @Synchronized
+    fun startRecorder() {
+        check(!released) { "Media projection stopped before recording started" }
+        recorder.start()
+        recorderStarted = true
+    }
+
+    override fun onStop() {
+        release()
+    }
+
+    @Synchronized
+    fun release() {
+        if (released) {
+            return
+        }
+        released = true
+        if (recorderStarted) {
+            runCatching { recorder.stop() }
+            recorderStarted = false
+        }
+        runCatching { recorder.reset() }
+        recorder.release()
+        display?.release()
+        display = null
     }
 }
 
@@ -150,6 +277,8 @@ private suspend fun requestProjection(context: Context): android.media.projectio
             retryable = false,
         )
     }
+    delay(200)
+    ActionRuntimeService.enableMediaProjection(context)
     return manager.getMediaProjection(grant.resultCode, grant.data)
         ?: throw ActionException(
             code = ErrorCode.INTERNAL,

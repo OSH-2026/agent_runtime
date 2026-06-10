@@ -66,7 +66,7 @@ kotlin/
 
 - 执行审计日志与快照查询。
 - Intent Host Activity，用于需要 Activity Result 的系统交互。
-- MediaProjection 权限协调，用于截图和录屏。
+- Android 11+ 通过一次性启用的无障碍服务静默截图；录屏和旧版 Android 截图使用 MediaProjection。
 - Notification Listener Service，用于读取通知与媒体会话。
 - 前台服务通知与 Android 生命周期管理。
 - 普通权限及特殊系统权限的检查与辅助处理。
@@ -162,7 +162,9 @@ registry.register_remote("device_info", action);
 
 - 在运行时申请危险权限。
 - 引导用户启用通知监听、使用情况访问和精确闹钟等特殊权限。
-- 在截图或录屏时完成 MediaProjection 授权。
+- Android 11+ 使用 `screenshot` 前需在系统无障碍设置中启用 Action Runtime screenshot service。启用后 gRPC 截图不会切换应用或弹出 MediaProjection 确认框。
+- `screen_record` 以及 Android 10 及以下的 `screenshot` 仍需完成 MediaProjection 授权。
+- Android 13+ 侧载 APK 可能需要先在应用信息页选择“允许受限设置”，才能启用无障碍服务。
 - 对短信、通话、联系人等敏感能力提供明确的用户确认和使用边界。
 
 ## 协议一致性

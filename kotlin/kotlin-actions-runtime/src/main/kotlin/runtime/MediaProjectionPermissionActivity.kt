@@ -8,32 +8,36 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 
 class MediaProjectionPermissionActivity : ComponentActivity() {
+    private var pendingGrant: MediaProjectionGrant? = null
+
     private val launcher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        MediaProjectionCoordinator.complete(result.resultCode, result.data)
-        finish()
+        finishWithGrant(result.resultCode, result.data)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val manager = getSystemService(MediaProjectionManager::class.java)
         if (manager == null) {
-            MediaProjectionCoordinator.complete(Activity.RESULT_CANCELED, null)
-            finish()
+            finishWithGrant(Activity.RESULT_CANCELED, null)
             return
         }
         launcher.launch(manager.createScreenCaptureIntent())
     }
 
     override fun onDestroy() {
+        val grant = pendingGrant
+        pendingGrant = null
         super.onDestroy()
-        if (isFinishing) {
-            return
+        if (grant != null) {
+            MediaProjectionCoordinator.complete(grant.resultCode, grant.data)
         }
     }
 
-    companion object {
-        const val RESULT_CANCELED = Activity.RESULT_CANCELED
+    private fun finishWithGrant(resultCode: Int, data: Intent?) {
+        pendingGrant = MediaProjectionGrant(resultCode, data)
+        finishAndRemoveTask()
+        overridePendingTransition(0, 0)
     }
 }
