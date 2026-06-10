@@ -1,11 +1,12 @@
+use actions::catalog::metadata_for_action;
 use actions::{Action, ActionInput, ActionOutput, ActionRegistry};
 use async_trait::async_trait;
+use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use dispatcher::{
     ActionExecutor, ActionPolicy, Contract, Engine, ExecutionContext, ExecutionPlan, GlobalState,
     InMemoryAuditLog, InMemoryStateStore, Node, NodeConfig, RiskLevel, SideEffectLevel,
     SimpleRecovery,
 };
-use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,12 +26,17 @@ impl Action for EchoAction {
 #[tokio::main]
 async fn main() {
     let mut registry = ActionRegistry::default();
-    registry.register_local("echo", Arc::new(EchoAction));
+    registry.register_local_with_metadata(
+        "echo",
+        Arc::new(EchoAction),
+        metadata_for_action("echo").expect("echo metadata must exist"),
+    );
     let registry = Arc::new(registry);
 
     let node_a = Node {
         id: "A".to_string(),
         action: "echo".to_string(),
+        inputs: None,
         config: NodeConfig {
             retry_budget: 2,
             timeout: Duration::from_secs(5),
@@ -44,6 +50,7 @@ async fn main() {
     let node_b = Node {
         id: "B".to_string(),
         action: "echo".to_string(),
+        inputs: None,
         config: NodeConfig {
             retry_budget: 2,
             timeout: Duration::from_secs(5),
@@ -70,6 +77,7 @@ async fn main() {
             from: "A".to_string(),
             to: "B".to_string(),
         }],
+        output_node: "B".to_string(),
         output_contract: Contract {
             schema: "bytes".to_string(),
         },

@@ -1,5 +1,5 @@
 use dispatcher::plan::validate_dag;
-use dispatcher::{load_action_flow_from_str, PlanError};
+use dispatcher::{PlanError, load_action_flow_from_str};
 use std::fs;
 use std::path::PathBuf;
 
@@ -30,6 +30,40 @@ steps:
     assert!(plan.edges.iter().any(|e| e.from == "A" && e.to == "B"));
     assert!(plan.edges.iter().any(|e| e.from == "A" && e.to == "C"));
     assert!(plan.edges.iter().any(|e| e.from == "B" && e.to == "C"));
+    assert_eq!(plan.output_node, "C");
+}
+
+#[test]
+fn load_requires_explicit_output_for_multiple_sinks() {
+    let yaml = r#"
+version: 1
+id: demo
+steps:
+  - id: A
+    action: echo
+  - id: B
+    action: echo
+"#;
+
+    let err = load_action_flow_from_str(yaml).expect_err("expected ambiguous output error");
+    assert!(err.to_string().contains("multiple output nodes"));
+}
+
+#[test]
+fn load_uses_explicit_output_instead_of_step_order() {
+    let yaml = r#"
+version: 1
+id: demo
+output: A
+steps:
+  - id: A
+    action: echo
+  - id: B
+    action: echo
+"#;
+
+    let plan = load_action_flow_from_str(yaml).expect("plan load failed");
+    assert_eq!(plan.output_node, "A");
 }
 
 #[test]
@@ -98,6 +132,7 @@ fn validate_detects_cycle() {
     let yaml = r#"
 version: 1
 id: demo
+output: A
 steps:
   - id: A
     action: echo

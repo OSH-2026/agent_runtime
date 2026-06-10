@@ -13,6 +13,8 @@ pub struct ActionFlowFile {
     #[serde(default)]
     pub globals: Option<FlowGlobals>,
     pub steps: Vec<FlowStep>,
+    #[serde(default, alias = "outputStep")]
+    pub output: Option<String>,
     #[serde(default, alias = "outputContract")]
     pub output_contract: Option<String>,
 }
@@ -76,6 +78,7 @@ pub struct FlowOutputs {
 pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, DispatcherError> {
     let flow: ActionFlowFile =
         serde_yaml::from_str(input).map_err(|err| PlanError::InvalidFormat(err.to_string()))?;
+    let requested_output = flow.output.clone();
     let defaults = flow.globals.and_then(|globals| globals.defaults);
 
     let mut nodes = HashMap::new();
@@ -145,6 +148,7 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
         }
     }
 
+    let output_node = select_output_node(requested_output.as_deref(), &nodes, &edges)?;
     let edges = edges
         .into_iter()
         .map(|(from, to)| Edge { from, to })
@@ -155,6 +159,7 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
         version: flow.version,
         nodes,
         edges,
+        output_node,
         output_contract: Contract {
             schema: flow.output_contract.unwrap_or_else(|| "bytes".to_string()),
         },
@@ -163,17 +168,42 @@ pub fn load_action_flow_from_str(input: &str) -> Result<ExecutionPlan, Dispatche
     Ok(plan)
 }
 
+fn select_output_node(
+    requested_output: Option<&str>,
+    nodes: &HashMap<NodeId, Node>,
+    edges: &HashSet<(NodeId, NodeId)>,
+) -> Result<NodeId, DispatcherError> {
+    if let Some(output) = requested_output {
+        if nodes.contains_key(output) {
+            return Ok(output.to_string());
+        }
+        return Err(PlanError::MissingNode(output.to_string()).into());
+    }
+
+    let non_sinks: HashSet<&str> = edges.iter().map(|(from, _)| from.as_str()).collect();
+    let mut sinks: Vec<NodeId> = nodes
+        .keys()
+        .filter(|id| !non_sinks.contains(id.as_str()))
+        .cloned()
+        .collect();
+    sinks.sort();
+    match sinks.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(PlanError::InvalidFormat("flow has no output node".to_string()).into()),
+        _ => Err(PlanError::InvalidFormat(format!(
+            "flow has multiple output nodes; set output explicitly: {}",
+            sinks.join(", ")
+        ))
+        .into()),
+    }
+}
+
 fn parse_side_effect(value: &str) -> Result<SideEffectLevel, DispatcherError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "pure" => Ok(SideEffectLevel::Pure),
         "idempotent" => Ok(SideEffectLevel::Idempotent),
-        "nonidempotent" | "non_idempotent" | "non-idempotent" => {
-            Ok(SideEffectLevel::NonIdempotent)
-        }
-        _ => Err(PlanError::InvalidFormat(format!(
-            "unknown side_effect: {value}"
-        ))
-        .into()),
+        "nonidempotent" | "non_idempotent" | "non-idempotent" => Ok(SideEffectLevel::NonIdempotent),
+        _ => Err(PlanError::InvalidFormat(format!("unknown side_effect: {value}")).into()),
     }
 }
 
