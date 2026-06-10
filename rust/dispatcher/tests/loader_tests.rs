@@ -1,5 +1,7 @@
-use dispatcher::{load_action_flow_from_str, PlanError};
 use dispatcher::plan::validate_dag;
+use dispatcher::{load_action_flow_from_str, PlanError};
+use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn load_basic_edges_from_references() {
@@ -115,5 +117,36 @@ steps:
             assert!(nodes.contains(&"B".to_string()));
         }
         _ => panic!("unexpected error: {err}"),
+    }
+}
+
+#[test]
+fn bundled_android_workflows_are_valid_dags() {
+    let workflows_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/workflows");
+    let workflow_files = [
+        "device-health-report.yaml",
+        "travel-preflight.yaml",
+        "communication-digest.yaml",
+        "incident-evidence-capture.yaml",
+    ];
+
+    for file_name in workflow_files {
+        let path = workflows_dir.join(file_name);
+        let yaml = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let plan = load_action_flow_from_str(&yaml)
+            .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display()));
+        validate_dag(&plan)
+            .unwrap_or_else(|error| panic!("invalid DAG in {}: {error}", path.display()));
+        assert!(
+            plan.nodes.len() >= 7,
+            "{} should remain a non-trivial workflow",
+            path.display()
+        );
+        assert!(
+            !plan.edges.is_empty(),
+            "{} should contain data dependencies",
+            path.display()
+        );
     }
 }

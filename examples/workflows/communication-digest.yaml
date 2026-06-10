@@ -1,0 +1,86 @@
+version: 1
+id: communication-digest
+globals:
+  defaults:
+    retryBudget: 0
+    timeoutMs: 12000
+    sideEffect: pure
+    policy:
+      riskLevel: low
+steps:
+  - id: permissions
+    action: check_permissions
+    inputs:
+      permissions:
+        - android.permission.READ_SMS
+        - android.permission.READ_CALL_LOG
+        - android.permission.READ_CONTACTS
+
+  - id: sms
+    action: read_sms
+    inputs:
+      box: inbox
+      limit: 10
+
+  - id: calls
+    action: read_call_log
+    inputs:
+      limit: 10
+
+  - id: notifications
+    action: list_notifications
+    inputs:
+      includeOngoing: false
+
+  - id: contacts
+    action: search_contacts
+    inputs:
+      query: "张"
+      limit: 10
+
+  - id: digest_note
+    action: intent_create_note
+    inputs:
+      title: "Communication digest"
+      text: |
+        Permissions: ${permissions}
+        Recent SMS: ${sms}
+        Recent calls: ${calls}
+        Notifications: ${notifications}
+        Matching contacts: ${contacts}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: medium
+      collectEvidence: true
+
+  - id: copy_digest
+    action: clipboard_copy
+    inputs:
+      label: "communication-digest"
+      text: |
+        SMS: ${sms}
+        Calls: ${calls}
+        Notifications: ${notifications}
+        Contacts: ${contacts}
+        Note launch: ${digest_note}
+    sideEffect: idempotent
+    policy:
+      riskLevel: medium
+
+  - id: email_digest
+    action: intent_compose_email
+    inputs:
+      to: "me@example.com"
+      subject: "Communication digest"
+      body: |
+        SMS: ${sms}
+        Calls: ${calls}
+        Notifications: ${notifications}
+        Contacts: ${contacts}
+        Note launch: ${digest_note}
+        Clipboard result: ${copy_digest}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+
+outputContract: json

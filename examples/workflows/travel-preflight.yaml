@@ -1,0 +1,78 @@
+version: 1
+id: travel-preflight
+globals:
+  defaults:
+    retryBudget: 1
+    timeoutMs: 15000
+    sideEffect: pure
+steps:
+  - id: permissions
+    action: check_permissions
+    inputs:
+      permissions:
+        - android.permission.ACCESS_FINE_LOCATION
+        - android.permission.READ_CALENDAR
+
+  - id: location
+    action: get_location
+    inputs:
+      allowStaleMs: 600000
+
+  - id: network
+    action: network_status
+    inputs:
+      includeDetails: true
+
+  - id: power
+    action: power_status
+    inputs:
+      includeDetails: true
+
+  - id: calendar
+    action: list_calendar_events
+    inputs:
+      startTimeMs: 1781020800000
+      endTimeMs: 1781193600000
+      limit: 20
+
+  - id: open_destination
+    action: intent_show_map
+    inputs:
+      geoUri: "geo:0,0?q=Shanghai+Hongqiao+Railway+Station"
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: medium
+
+  - id: travel_brief
+    action: intent_create_note
+    inputs:
+      title: "Travel preflight"
+      text: |
+        Permission status: ${permissions}
+        Current location: ${location}
+        Network: ${network}
+        Power: ${power}
+        Calendar: ${calendar}
+        Map launch: ${open_destination}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: medium
+      collectEvidence: true
+
+  - id: email_brief
+    action: intent_compose_email
+    inputs:
+      to: "me@example.com"
+      subject: "Travel preflight report"
+      body: |
+        Permission status: ${permissions}
+        Current location: ${location}
+        Network: ${network}
+        Power: ${power}
+        Calendar: ${calendar}
+        Note launch: ${travel_brief}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+
+outputContract: json

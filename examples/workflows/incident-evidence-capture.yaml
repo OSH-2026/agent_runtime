@@ -1,0 +1,99 @@
+version: 1
+id: incident-evidence-capture
+globals:
+  defaults:
+    retryBudget: 1
+    timeoutMs: 20000
+    sideEffect: pure
+steps:
+  - id: permissions
+    action: check_permissions
+    inputs:
+      permissions:
+        - android.permission.CAMERA
+        - android.permission.RECORD_AUDIO
+        - android.permission.ACCESS_FINE_LOCATION
+
+  - id: device
+    action: device_info
+    inputs:
+      includeHardware: true
+
+  - id: network
+    action: network_status
+    inputs:
+      includeDetails: true
+
+  - id: location
+    action: get_location
+    inputs:
+      allowStaleMs: 300000
+
+  - id: photo
+    action: take_photo
+    inputs:
+      lens: back
+    retryBudget: 0
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+      timeoutMs: 30000
+      collectEvidence: true
+
+  - id: audio
+    action: record_audio
+    inputs:
+      durationSeconds: 5
+    retryBudget: 0
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+      timeoutMs: 15000
+      collectEvidence: true
+
+  - id: screenshot
+    action: screenshot
+    inputs:
+      timeoutMs: 5000
+    retryBudget: 0
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+      timeoutMs: 15000
+      collectEvidence: true
+
+  - id: evidence_note
+    action: intent_create_note
+    inputs:
+      title: "Incident evidence manifest"
+      text: |
+        Permission status: ${permissions}
+        Device: ${device}
+        Network: ${network}
+        Location: ${location}
+        Photo artifact: ${photo}
+        Audio artifact: ${audio}
+        Screenshot artifact: ${screenshot}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+      collectEvidence: true
+
+  - id: email_manifest
+    action: intent_compose_email
+    inputs:
+      to: "security@example.com"
+      subject: "Incident evidence manifest"
+      body: |
+        Device: ${device}
+        Network: ${network}
+        Location: ${location}
+        Photo: ${photo}
+        Audio: ${audio}
+        Screenshot: ${screenshot}
+        Note launch: ${evidence_note}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: high
+
+outputContract: json

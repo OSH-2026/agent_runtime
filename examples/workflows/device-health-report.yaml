@@ -1,0 +1,66 @@
+version: 1
+id: device-health-report
+globals:
+  defaults:
+    retryBudget: 1
+    timeoutMs: 10000
+    sideEffect: pure
+    policy:
+      riskLevel: low
+steps:
+  - id: device
+    action: device_info
+    inputs:
+      includeHardware: true
+
+  - id: system
+    action: system_info
+    inputs:
+      includeStorage: true
+
+  - id: network
+    action: network_status
+    inputs:
+      includeDetails: true
+
+  - id: power
+    action: power_status
+    inputs:
+      includeDetails: true
+
+  - id: storage
+    action: storage_info
+    inputs:
+      includeExternal: true
+
+  - id: health_note
+    action: intent_create_note
+    inputs:
+      title: "Device health report"
+      text: |
+        Device: ${device}
+        System: ${system}
+        Network: ${network}
+        Power: ${power}
+        Storage: ${storage}
+    sideEffect: nonIdempotent
+    policy:
+      riskLevel: medium
+      collectEvidence: true
+
+  - id: copy_report
+    action: clipboard_copy
+    inputs:
+      label: "device-health-report"
+      text: |
+        Device: ${device}
+        System: ${system}
+        Network: ${network}
+        Power: ${power}
+        Storage: ${storage}
+        Note launch result: ${health_note}
+    sideEffect: idempotent
+    policy:
+      riskLevel: medium
+
+outputContract: json

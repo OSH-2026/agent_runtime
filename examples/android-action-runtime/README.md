@@ -19,7 +19,8 @@
    - 精确闹钟（Android 12+）
    - 使用情况访问（`foreground_app`）
    - 通知监听（`list_notifications`，需在列表中启用本 App）
-2. 再测 `[bg]` 按钮；`screenshot` / `screen_record` 会在执行时弹出 **MediaProjection** 系统授权。
+2. 在 Android 11+ 的系统无障碍设置中启用 **Action Runtime screenshot service**。启用后 `[bg] screenshot` 会直接截取当前页面，不会切换应用或弹出 MediaProjection 授权。
+3. `screen_record` 仍会在执行时弹出 **MediaProjection** 系统授权；Android 10 及以下的 `screenshot` 也使用该授权。
 3. `send_sms` / `place_call` 使用假号码 `5550000000`，仅作接口冒烟，请勿在真机上对真实号码使用。
 
 ## 已注册 Action 名称（59，Rust 联调请用相同字符串）
