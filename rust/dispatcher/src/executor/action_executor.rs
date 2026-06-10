@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::task::JoinSet;
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone)]
 pub struct ActionExecutor {
@@ -88,7 +89,29 @@ impl Executor for ActionExecutor {
                     payload,
                     metadata: std::collections::HashMap::new(),
                 };
-                let output = handle.execute(input).await;
+                let timeout_ms = if node.config.policy.timeout_ms > 0 {
+                    node.config.policy.timeout_ms
+                } else {
+                    node.config
+                        .timeout
+                        .as_millis()
+                        .try_into()
+                        .unwrap_or(u64::MAX)
+                };
+                let output = if timeout_ms == 0 {
+                    handle.execute(input).await
+                } else {
+                    match timeout(Duration::from_millis(timeout_ms), handle.execute(input)).await {
+                        Ok(output) => output,
+                        Err(_) => {
+                            return ExecutionResult {
+                                node_id,
+                                outcome: Outcome::Failure,
+                                error: Some(format!("action timed out after {timeout_ms} ms")),
+                            };
+                        }
+                    }
+                };
                 if output.is_ok() {
                     if let Ok(mut guard) = outputs.lock() {
                         guard.insert(node_id.clone(), output.payload.clone());
