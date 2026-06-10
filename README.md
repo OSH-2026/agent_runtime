@@ -9,7 +9,7 @@
 
 两条技术线共同构成“本地模型负责规划与生成，Action Fabric 负责可靠执行”的端侧 Agent Runtime 技术栈。当前仓库包含 Action Fabric 的完整工程实现；端侧 LLM 推理框架位于独立仓库。
 
-> 端侧 LLM 仓库：[项目仓库链接（待替换）](https://github.com/PLACEHOLDER/edge-llm-runtime)
+> 端侧 LLM 仓库：[项目仓库链接](https://github.com/PLACEHOLDER/edge-llm-runtime)](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
 
 ## 项目成果
 
@@ -98,9 +98,9 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 
 ### 端侧 LLM：Android 本地推理框架
 
-端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。系统基于 `llama.cpp` 与 GGUF 模型格式，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
+端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与KV Cache机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
 
-系统支持 Qwen3-0.6B 等小规模语言模型在移动端完全本地运行，同时提供兼容 OpenAI API 的调用接口，可供上层应用或 Agent 系统直接接入。
+系统支持 Qwen3-0.6B, Qwen3-1.7B 等小规模语言模型在移动端完全本地运行，同时提供兼容 OpenAI API 的调用接口，可供上层应用或 Agent 系统直接接入。
 
 #### GPU 推理与长上下文优化
 
