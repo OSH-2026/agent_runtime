@@ -1,22 +1,24 @@
 use actions::subagent::ToolExecutor;
-use actions::{ActionError, ActionInput, ActionRegistry};
+use actions::{ActionError, ActionMetadata, ActionRegistry, ActionRisk, ActionSideEffect};
 use async_trait::async_trait;
-use serde_yaml;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use serde_yaml::{self, Value};
+use std::sync::Arc;
 
-use crate::executor::{ExecutionResult, Executor, Outcome};
-use crate::input_resolver::resolve_node_payload;
-use crate::loader::{load_action_flow_from_str, ActionFlowFile};
-use crate::plan::{ExecutionPlan, NodeId};
+use crate::executor::ActionExecutor;
+use crate::loader::{ActionFlowFile, load_action_flow_from_str};
+use crate::plan::SideEffectLevel;
+use crate::policy::RiskLevel;
 use crate::recovery::SimpleRecovery;
 use crate::runtime::{DiagnosticContext, Engine, ExecutionContext};
 use crate::scheduler::{Dispatcher, TopoPolicy};
-use crate::state::GlobalState;
+use crate::state::{GlobalState, NodeState};
 use crate::storage::{InMemoryAuditLog, InMemoryStateStore};
 use crate::{DispatcherError, PlanError};
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+
+const MAX_TOOL_STEPS: usize = 32;
+const MAX_TOOL_OUTPUT_BYTES: usize = 1024 * 1024;
 
 pub struct DispatcherToolExecutor {
     registry: Arc<ActionRegistry>,
@@ -31,23 +33,56 @@ impl DispatcherToolExecutor {
 #[async_trait]
 impl ToolExecutor for DispatcherToolExecutor {
     async fn execute_yaml(&self, yaml: &str) -> Result<String, ActionError> {
-        let flow: ActionFlowFile = serde_yaml::from_str(yaml)
-            .map_err(|err| ActionError::new(err.to_string()))?;
-        let last_step = flow
-            .steps
-            .last()
-            .map(|step| step.id.clone())
-            .ok_or_else(|| ActionError::new("flow has no steps"))?;
-        let plan = load_action_flow_from_str(yaml).map_err(to_action_error)?;
-        let output_map: Arc<Mutex<HashMap<NodeId, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let raw_flow: Value = serde_yaml::from_str(yaml)
+            .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
+        reject_subagent_policy_fields(&raw_flow)?;
+        let flow: ActionFlowFile = serde_yaml::from_value(raw_flow)
+            .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
+        if flow.steps.is_empty() {
+            return Err(ActionError::new_with(
+                "INVALID_FORMAT",
+                "flow has no steps",
+                false,
+            ));
+        }
+        if flow.steps.len() > MAX_TOOL_STEPS {
+            return Err(ActionError::new_with(
+                "RESOURCE_LIMIT",
+                format!("flow exceeds maximum of {MAX_TOOL_STEPS} steps"),
+                false,
+            ));
+        }
 
-        let executor = CapturingExecutor {
-            registry: Arc::clone(&self.registry),
-            outputs: Arc::clone(&output_map),
-            plan: plan.clone(),
-        };
+        let mut plan = load_action_flow_from_str(yaml).map_err(to_action_error)?;
+        for node in plan.nodes.values_mut() {
+            let metadata = self
+                .registry
+                .trusted_metadata(&node.action)
+                .ok_or_else(|| {
+                    ActionError::new_with(
+                        "UNTRUSTED_ACTION",
+                        format!(
+                            "action '{}' is not registered with trusted subagent metadata",
+                            node.action
+                        ),
+                        false,
+                    )
+                })?;
+            if !metadata.callable_by_subagent {
+                return Err(ActionError::new_with(
+                    "ACTION_NOT_ALLOWED",
+                    format!("action '{}' is not callable by subagents", node.action),
+                    false,
+                ));
+            }
+            apply_trusted_metadata(node, metadata);
+        }
+
+        let plan = Arc::new(plan);
+        let executor = ActionExecutor::new(Arc::clone(&self.registry), Arc::clone(&plan));
+        let output_reader = executor.clone();
         let mut engine = Engine {
-            plan: plan.clone(),
+            plan: (*plan).clone(),
             state: GlobalState::new(&plan),
             dispatcher: Dispatcher::new(Box::new(TopoPolicy::default())),
             executor: Box::new(executor),
@@ -61,12 +96,45 @@ impl ToolExecutor for DispatcherToolExecutor {
             .await
             .map_err(to_action_error)?;
 
-        let output = output_map
-            .lock()
-            .map_err(|_| ActionError::new("output lock poisoned"))?
-            .get(&last_step)
+        let incomplete: Vec<String> = engine
+            .state
+            .nodes
+            .iter()
+            .filter(|(_, state)| !matches!(state, NodeState::Executed))
+            .map(|(id, state)| format!("{id}={state:?}"))
+            .collect();
+        if !incomplete.is_empty() {
+            let cause = engine
+                .diagnostic
+                .history
+                .last()
+                .map(|failure| failure.message.as_str())
+                .unwrap_or("workflow did not reach a successful terminal state");
+            return Err(ActionError::new_with(
+                "WORKFLOW_INCOMPLETE",
+                format!("{cause}; states: {}", incomplete.join(", ")),
+                false,
+            ));
+        }
+
+        let output = output_reader
+            .outputs()
+            .get(&plan.output_node)
             .cloned()
-            .ok_or_else(|| ActionError::new("last step output not found"))?;
+            .ok_or_else(|| {
+                ActionError::new_with(
+                    "OUTPUT_MISSING",
+                    format!("output not found for node '{}'", plan.output_node),
+                    false,
+                )
+            })?;
+        if output.len() > MAX_TOOL_OUTPUT_BYTES {
+            return Err(ActionError::new_with(
+                "RESOURCE_LIMIT",
+                format!("tool output exceeds maximum of {MAX_TOOL_OUTPUT_BYTES} bytes"),
+                false,
+            ));
+        }
 
         match String::from_utf8(output) {
             Ok(text) => Ok(text),
@@ -75,90 +143,74 @@ impl ToolExecutor for DispatcherToolExecutor {
     }
 }
 
-struct CapturingExecutor {
-    registry: Arc<ActionRegistry>,
-    outputs: Arc<Mutex<HashMap<NodeId, Vec<u8>>>>,
-    plan: ExecutionPlan,
-}
+fn reject_subagent_policy_fields(flow: &Value) -> Result<(), ActionError> {
+    let mapping = flow.as_mapping().ok_or_else(|| {
+        ActionError::new_with("INVALID_FORMAT", "flow must be a YAML mapping", false)
+    })?;
 
-#[async_trait]
-impl Executor for CapturingExecutor {
-    async fn execute_batch(
-        &self,
-        nodes: Vec<NodeId>,
-        context: &ExecutionContext,
-    ) -> Vec<ExecutionResult> {
-        let mut results = Vec::new();
-        for node_id in nodes {
-            let node = match self.plan.nodes.get(&node_id) {
-                Some(node) => node,
-                None => {
-                    results.push(ExecutionResult {
-                        node_id,
-                        outcome: Outcome::Failure,
-                        error: Some("node not found".to_string()),
-                    });
-                    continue;
-                }
-            };
-            let action_name = node.action.clone();
-            let handle = match self.registry.get(&action_name) {
-                Some(handle) => handle,
-                None => {
-                    results.push(ExecutionResult {
-                        node_id,
-                        outcome: Outcome::Failure,
-                        error: Some(format!("action not found: {action_name}")),
-                    });
-                    continue;
-                }
-            };
-            let payload = match self.outputs.lock() {
-                Ok(guard) => resolve_node_payload(node, &guard, &context.inputs),
-                Err(_) => Err(crate::error::DispatcherError::Execution(
-                    "output lock poisoned".to_string(),
-                )),
-            };
-            let payload = match payload {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    results.push(ExecutionResult {
-                        node_id,
-                        outcome: Outcome::Failure,
-                        error: Some(error.to_string()),
-                    });
-                    continue;
-                }
-            };
-            let input = ActionInput {
-                payload,
-                metadata: HashMap::new(),
-            };
-            let output = handle.execute(input).await;
-            if output.is_ok() {
-                if let Ok(mut guard) = self.outputs.lock() {
-                    guard.insert(node_id.clone(), output.payload.clone());
-                }
-                results.push(ExecutionResult {
-                    node_id,
-                    outcome: Outcome::Success,
-                    error: None,
-                });
-            } else {
-                let message = output
-                    .error
-                    .as_ref()
-                    .map(|err| format!("{}: {}", err.code, err.message))
-                    .unwrap_or_else(|| "unknown error".to_string());
-                results.push(ExecutionResult {
-                    node_id,
-                    outcome: Outcome::Failure,
-                    error: Some(message),
-                });
+    if let Some(globals) = mapping.get(Value::String("globals".to_string())) {
+        if let Some(defaults) = globals
+            .as_mapping()
+            .and_then(|globals| globals.get(Value::String("defaults".to_string())))
+        {
+            reject_policy_mapping(defaults, "globals.defaults")?;
+        }
+    }
+
+    if let Some(steps) = mapping.get(Value::String("steps".to_string())) {
+        if let Some(steps) = steps.as_sequence() {
+            for (index, step) in steps.iter().enumerate() {
+                reject_policy_mapping(step, &format!("steps[{index}]"))?;
             }
         }
-        results
     }
+    Ok(())
+}
+
+fn reject_policy_mapping(value: &Value, location: &str) -> Result<(), ActionError> {
+    let Some(mapping) = value.as_mapping() else {
+        return Ok(());
+    };
+    const FORBIDDEN_FIELDS: [&str; 7] = [
+        "policy",
+        "sideEffect",
+        "side_effect",
+        "retryBudget",
+        "retry_budget",
+        "timeoutMs",
+        "timeout_ms",
+    ];
+    for field in FORBIDDEN_FIELDS {
+        if mapping.contains_key(Value::String(field.to_string())) {
+            return Err(ActionError::new_with(
+                "POLICY_NOT_ALLOWED",
+                format!(
+                    "{location}.{field} is not allowed in subagent YAML; execution policy comes from action metadata"
+                ),
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_trusted_metadata(node: &mut crate::plan::Node, metadata: &ActionMetadata) {
+    node.config.side_effect = match metadata.side_effect {
+        ActionSideEffect::Pure => SideEffectLevel::Pure,
+        ActionSideEffect::Idempotent => SideEffectLevel::Idempotent,
+        ActionSideEffect::NonIdempotent => SideEffectLevel::NonIdempotent,
+    };
+    node.config.policy.risk_level = match metadata.risk {
+        ActionRisk::Low => RiskLevel::Low,
+        ActionRisk::Medium => RiskLevel::Medium,
+        ActionRisk::High => RiskLevel::High,
+        ActionRisk::Critical => RiskLevel::Critical,
+    };
+    node.config.policy.requires_confirmation = metadata.requires_confirmation;
+    node.config.policy.collect_evidence = metadata.collect_evidence;
+    node.config.policy.timeout_ms = metadata.timeout_ms;
+    node.config.policy.max_retries = metadata.max_retries;
+    node.config.retry_budget = metadata.max_retries;
 }
 
 fn to_action_error(err: DispatcherError) -> ActionError {

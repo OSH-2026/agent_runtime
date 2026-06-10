@@ -8,18 +8,9 @@
 ```yaml
 version: 1
 id: unique-workflow-id
-globals:
-  defaults:
-    retryBudget: 1
-    timeoutMs: 10000
-    sideEffect: pure # pure | idempotent | nonIdempotent
-    policy:
-      riskLevel: low # low | medium | high | critical
-      maxRetries: 1
-      collectEvidence: false
-      requiresConfirmation: false
+output: device
 steps:
-  - id: unique_step_id
+  - id: device
     action: device_info
     inputs:
       includeHardware: true
@@ -162,23 +153,19 @@ CalendarEvent = {id,title,description,location,beginTimeMs,endTimeMs}
 2. 每个 step 的 `id` 必须唯一，只使用字母、数字、下划线或短横线。
 3. 无依赖的只读节点应并行放置；通过 `${step_id}` 建立汇合依赖。
 4. 时间均使用 Unix epoch 毫秒；时区使用 IANA 名称，如 `Asia/Shanghai`。
-5. 只读查询通常设为 `sideEffect: pure`。
-6. 剪贴板、音量、网络开关等可重复写操作通常设为 `idempotent`。
-7. 短信、电话、日历写入、录音录像、拍照和启动外部 Activity 通常设为
-   `nonIdempotent`，风险设为 `medium`、`high` 或 `critical`。
-8. 非幂等 action 不要自动重试，通常使用 `retryBudget: 0`。
-9. 当前 demo 不要生成 `requiresConfirmation: true`，否则节点会进入
-   `WaitingHuman`，但 UI 暂无确认后恢复执行能力。
-10. 不要把整个 `${step_id}` JSON 填入要求数字、布尔值或数组的字段。当前引用替换
+5. 不要生成 `policy`、`sideEffect`、`retryBudget` 或 `timeoutMs`。风险、确认、
+   超时和重试策略由可信 Action Registry 元数据提供。
+6. 多个无后继节点存在时必须用顶层 `output` 指定最终输出节点。
+7. 不要把整个 `${step_id}` JSON 填入要求数字、布尔值或数组的字段。当前引用替换
     只生成字符串，最适合用于 `text`、`body`、`subject` 等字符串字段。
-11. `http_call` 当前只支持 GET，输入只有 `url`。
-12. 输出必须是纯 YAML，不要使用 Markdown 代码围栏或附加解释。
+8. `http_call` 当前只支持 GET，输入只有 `url`。
+9. 输出必须是纯 YAML，不要使用 Markdown 代码围栏或附加解释。
 
 ## 建议的 LLM 指令
 
 ```text
 根据用户目标生成 ActionFlow YAML。严格使用 action catalog 中存在的 action 和输入字段。
-优先并行执行互不依赖的只读步骤，用 ${step_id} 创建依赖。正确标记 sideEffect、风险、
-超时和重试。不要使用字段级引用，因为当前运行时只会注入整个上游 JSON 字符串。
+优先并行执行互不依赖的只读步骤，用 ${step_id} 创建依赖。不要生成任何执行策略字段，
+这些策略由 Action Registry 提供。不要使用字段级引用，因为当前运行时只会注入整个上游 JSON 字符串。
 最终只输出可解析的 YAML，不输出解释或 Markdown 围栏。
 ```

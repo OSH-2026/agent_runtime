@@ -1,11 +1,17 @@
-use crate::types::{ActionError, ActionInput, ActionOutput};
 use crate::Action;
+use crate::types::{ActionError, ActionInput, ActionOutput};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
+use std::time::Duration;
 
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a subagent that can call tools by emitting YAML action flows.\n\nWhen you need a tool, respond with a YAML action flow using this schema:\n\nversion: 1\nid: demo\nsteps:\n  - id: A\n    action: echo\n    inputs:\n      payload: \"hello\"\n  - id: B\n    action: echo\n    inputs:\n      payload: \"${A}\"\n\nOnly output the YAML block when requesting tools.\n\nIf you want to end the subagent, respond with a line containing: tool: return\nThe caller will return the previous message content as the final answer.\n";
+const DEFAULT_SYSTEM_PROMPT: &str = "You are a subagent that can call tools by emitting YAML action flows.\n\nWhen you need a tool, respond with a YAML action flow using this schema:\n\nversion: 1\nid: demo\noutput: B\nsteps:\n  - id: A\n    action: echo\n    inputs:\n      payload: \"hello\"\n  - id: B\n    action: echo\n    inputs:\n      payload: \"${A}\"\n\nOnly output the YAML block when requesting tools. Tool results are JSON objects with ok, output, code, message, and retryable fields. Do not include execution policy fields in tool YAML; policies are supplied by the trusted action registry.\n\nAny response that is not a YAML action flow is treated as the final answer.\n";
+const DEFAULT_MAX_TURNS: u32 = 8;
+const MAX_TURNS: u32 = 32;
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
+const MAX_REQUEST_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentInput {
@@ -18,6 +24,8 @@ pub struct SubagentInput {
     pub max_turns: u32,
     #[serde(default)]
     pub temperature: f32,
+    #[serde(default)]
+    pub request_timeout_ms: u64,
     #[serde(default)]
     pub system_prompt: Option<String>,
 }
@@ -69,7 +77,10 @@ impl SubagentAction {
     pub fn new(executor: Arc<dyn ToolExecutor>) -> Self {
         Self {
             executor,
-            http: Client::new(),
+            http: Client::builder()
+                .timeout(Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS))
+                .build()
+                .expect("default HTTP client configuration must be valid"),
         }
     }
 }
@@ -98,7 +109,17 @@ impl SubagentAction {
             input.payload
         };
         let req: SubagentInput = serde_json::from_slice(&payload)
-            .map_err(|err| ActionError::new(err.to_string()))?;
+            .map_err(|err| ActionError::new_with("INVALID_INPUT", err.to_string(), false))?;
+        if req.prompt.trim().is_empty()
+            || req.model.trim().is_empty()
+            || req.base_url.trim().is_empty()
+        {
+            return Err(ActionError::new_with(
+                "INVALID_INPUT",
+                "prompt, model, and base_url must not be empty",
+                false,
+            ));
+        }
         let mut history = Vec::new();
         history.push(ChatMessage {
             role: "system".to_string(),
@@ -114,33 +135,31 @@ impl SubagentAction {
             name: None,
         });
 
-        let max_turns = if req.max_turns == 0 { 8 } else { req.max_turns };
+        let max_turns = if req.max_turns == 0 {
+            DEFAULT_MAX_TURNS
+        } else {
+            req.max_turns.min(MAX_TURNS)
+        };
         for _ in 0..max_turns {
-            let assistant = self
-                .call_llm(&req, &history)
-                .await
-                .map_err(|err| ActionError::new(err.to_string()))?;
+            let assistant = self.call_llm(&req, &history).await?;
             history.push(assistant.clone());
 
-            if is_return_tool(&assistant.content) {
-                let last = history
-                    .iter()
-                    .rev()
-                    .skip(1)
-                    .find(|msg| !msg.content.trim().is_empty())
-                    .map(|msg| msg.content.clone())
-                    .unwrap_or_default();
-                let output = SubagentOutput { text: last, history };
-                let bytes = serde_json::to_vec(&output)
-                    .map_err(|err| ActionError::new(err.to_string()))?;
-                return Ok(bytes);
-            }
-
             if let Some(yaml) = extract_yaml(&assistant.content) {
-                let tool_result = self.executor.execute_yaml(&yaml).await?;
+                let tool_result = match self.executor.execute_yaml(&yaml).await {
+                    Ok(output) => json!({
+                        "ok": true,
+                        "output": output,
+                    }),
+                    Err(error) => json!({
+                        "ok": false,
+                        "code": error.code,
+                        "message": error.message,
+                        "retryable": error.retryable,
+                    }),
+                };
                 history.push(ChatMessage {
                     role: "tool".to_string(),
-                    content: tool_result,
+                    content: tool_result.to_string(),
                     name: Some("dispatcher".to_string()),
                 });
                 continue;
@@ -150,45 +169,64 @@ impl SubagentAction {
                 text: assistant.content,
                 history,
             };
-            let bytes = serde_json::to_vec(&output)
-                .map_err(|err| ActionError::new(err.to_string()))?;
+            let bytes =
+                serde_json::to_vec(&output).map_err(|err| ActionError::new(err.to_string()))?;
             return Ok(bytes);
         }
 
-        let output = SubagentOutput {
-            text: "subagent max turns reached".to_string(),
-            history,
-        };
-        let bytes = serde_json::to_vec(&output).map_err(|err| ActionError::new(err.to_string()))?;
-        Ok(bytes)
+        Err(ActionError::new_with(
+            "MAX_TURNS",
+            format!("subagent reached the maximum of {max_turns} turns"),
+            false,
+        ))
     }
 
     async fn call_llm(
         &self,
         req: &SubagentInput,
         history: &[ChatMessage],
-    ) -> Result<ChatMessage, reqwest::Error> {
+    ) -> Result<ChatMessage, ActionError> {
         let endpoint = normalize_chat_endpoint(&req.base_url);
         let mut request = self.http.post(endpoint).json(&ChatRequest {
             model: req.model.clone(),
             messages: history.to_vec(),
-            temperature: if req.temperature > 0.0 { Some(req.temperature) } else { None },
+            temperature: if req.temperature > 0.0 {
+                Some(req.temperature)
+            } else {
+                None
+            },
         });
         if let Some(key) = &req.api_key {
             if !key.trim().is_empty() {
                 request = request.bearer_auth(key);
             }
         }
-        let response: ChatResponse = request.send().await?.json().await?;
-        Ok(response
+        let request_timeout_ms = if req.request_timeout_ms == 0 {
+            DEFAULT_REQUEST_TIMEOUT_MS
+        } else {
+            req.request_timeout_ms.min(MAX_REQUEST_TIMEOUT_MS)
+        };
+        let response: ChatResponse = request
+            .timeout(Duration::from_millis(request_timeout_ms))
+            .send()
+            .await
+            .map_err(|err| ActionError::new_with("LLM_REQUEST", err.to_string(), true))?
+            .error_for_status()
+            .map_err(|err| {
+                let retryable = err
+                    .status()
+                    .map(|status| status.is_server_error())
+                    .unwrap_or(false);
+                ActionError::new_with("LLM_HTTP", err.to_string(), retryable)
+            })?
+            .json()
+            .await
+            .map_err(|err| ActionError::new_with("LLM_RESPONSE", err.to_string(), false))?;
+        response
             .choices
             .first()
             .map(|choice| choice.message.clone())
-            .unwrap_or(ChatMessage {
-                role: "assistant".to_string(),
-                content: "".to_string(),
-                name: None,
-            }))
+            .ok_or_else(|| ActionError::new_with("LLM_RESPONSE", "response has no choices", false))
     }
 }
 
@@ -201,10 +239,6 @@ fn normalize_chat_endpoint(base: &str) -> String {
     } else {
         format!("{}/v1/chat/completions", trimmed)
     }
-}
-
-fn is_return_tool(content: &str) -> bool {
-    content.lines().any(|line| line.trim() == "tool: return")
 }
 
 fn extract_yaml(content: &str) -> Option<String> {
@@ -232,4 +266,15 @@ fn extract_fenced_yaml(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_yaml;
+
+    #[test]
+    fn extracts_fenced_yaml() {
+        let yaml = extract_yaml("```yaml\nversion: 1\nsteps: []\n```").expect("yaml expected");
+        assert_eq!(yaml, "version: 1\nsteps: []");
+    }
 }
