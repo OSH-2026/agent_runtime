@@ -5,10 +5,10 @@ pub mod protocol;
 pub mod subagent;
 pub mod types;
 
-pub use registry::ActionRegistry;
+pub use client::ActionClient;
+pub use registry::{ActionMetadata, ActionRegistry, ActionRisk, ActionSideEffect};
 pub use subagent::{SubagentAction, SubagentInput, SubagentOutput, ToolExecutor};
 pub use types::{ActionError, ActionInput, ActionOutput, ActionRequest, ActionResponse};
-pub use client::ActionClient;
 
 use async_trait::async_trait;
 
