@@ -31,12 +31,6 @@ pub struct SubagentInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SubagentOutput {
-    pub text: String,
-    pub history: Vec<ChatMessage>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -165,13 +159,7 @@ impl SubagentAction {
                 continue;
             }
 
-            let output = SubagentOutput {
-                text: assistant.content,
-                history,
-            };
-            let bytes =
-                serde_json::to_vec(&output).map_err(|err| ActionError::new(err.to_string()))?;
-            return Ok(bytes);
+            return Ok(assistant.content.into_bytes());
         }
 
         Err(ActionError::new_with(
