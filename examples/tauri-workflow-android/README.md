@@ -12,6 +12,9 @@
   Tauri 后端固定，不能由 workflow 覆盖。后端还会把可信 Action Catalog 注入
   subagent 的 system prompt，使其知道可调用 action 的签名和生成规则。
 
+当 workflow 或 subagent 生成的工具调用需要确认时，界面会显示 action、风险等级和
+输入参数。用户允许后从 `WaitingHuman` 状态继续执行，拒绝则取消本次 workflow。
+
 其余 Action 名会被视为 Kotlin 远程 Action。gRPC endpoint 默认是
 `127.0.0.1:8080`，适用于 Tauri App 与 Kotlin server 运行在同一台 Android 设备的情况。
 

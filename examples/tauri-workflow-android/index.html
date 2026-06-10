@@ -53,5 +53,31 @@
         </div>
       </section>
     </main>
+
+    <div
+      id="confirmation-overlay"
+      class="confirmation-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-hidden="true"
+      aria-labelledby="confirmation-title"
+    >
+      <section class="confirmation-dialog">
+        <p class="eyebrow">USER CONFIRMATION</p>
+        <h2 id="confirmation-title">允许执行此 Action？</h2>
+        <strong id="confirmation-action" class="confirmation-action"></strong>
+        <p id="confirmation-meta" class="confirmation-meta"></p>
+        <p class="confirmation-label">输入参数</p>
+        <pre id="confirmation-inputs" class="confirmation-inputs"></pre>
+        <div class="confirmation-actions">
+          <button id="reject-button" class="decision-button reject-button" type="button">
+            拒绝
+          </button>
+          <button id="approve-button" class="decision-button approve-button" type="button">
+            允许执行
+          </button>
+        </div>
+      </section>
+    </div>
   </body>
 </html>

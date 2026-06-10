@@ -5,7 +5,7 @@ use serde_yaml::{self, Value};
 use std::sync::Arc;
 
 use crate::executor::ActionExecutor;
-use crate::loader::{load_action_flow_from_str, ActionFlowFile};
+use crate::loader::{ActionFlowFile, load_action_flow_from_str};
 use crate::plan::SideEffectLevel;
 use crate::policy::RiskLevel;
 use crate::recovery::SimpleRecovery;
@@ -14,11 +14,24 @@ use crate::scheduler::{Dispatcher, TopoPolicy};
 use crate::state::{GlobalState, NodeState};
 use crate::storage::{InMemoryAuditLog, InMemoryStateStore};
 use crate::{DispatcherError, PlanError};
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 
 const MAX_TOOL_STEPS: usize = 32;
 const MAX_TOOL_OUTPUT_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct ConfirmationRequest {
+    pub node_id: String,
+    pub action: String,
+    pub inputs: Option<serde_json::Value>,
+    pub risk: ActionRisk,
+}
+
+#[async_trait]
+pub trait ConfirmationHandler: Send + Sync {
+    async fn confirm(&self, request: ConfirmationRequest) -> Result<bool, ActionError>;
+}
 
 pub trait ActionRegistryFactory: Send + Sync {
     fn create_registry(&self, tools: Arc<dyn ToolExecutor>) -> Result<ActionRegistry, ActionError>;
@@ -26,19 +39,38 @@ pub trait ActionRegistryFactory: Send + Sync {
 
 pub struct DispatcherToolExecutor {
     factory: Arc<dyn ActionRegistryFactory>,
+    confirmation_handler: Option<Arc<dyn ConfirmationHandler>>,
 }
 
 impl DispatcherToolExecutor {
     pub fn new(factory: Arc<dyn ActionRegistryFactory>) -> Self {
-        Self { factory }
+        Self {
+            factory,
+            confirmation_handler: None,
+        }
+    }
+
+    pub fn with_confirmation_handler(
+        factory: Arc<dyn ActionRegistryFactory>,
+        confirmation_handler: Arc<dyn ConfirmationHandler>,
+    ) -> Self {
+        Self {
+            factory,
+            confirmation_handler: Some(confirmation_handler),
+        }
     }
 }
 
 #[async_trait]
 impl ToolExecutor for DispatcherToolExecutor {
     async fn execute_yaml(&self, yaml: &str) -> Result<String, ActionError> {
-        let recursive_tools: Arc<dyn ToolExecutor> =
-            Arc::new(DispatcherToolExecutor::new(Arc::clone(&self.factory)));
+        let recursive_tools: Arc<dyn ToolExecutor> = match &self.confirmation_handler {
+            Some(handler) => Arc::new(DispatcherToolExecutor::with_confirmation_handler(
+                Arc::clone(&self.factory),
+                Arc::clone(handler),
+            )),
+            None => Arc::new(DispatcherToolExecutor::new(Arc::clone(&self.factory))),
+        };
         let registry = Arc::new(self.factory.create_registry(recursive_tools)?);
         let raw_flow: Value = serde_yaml::from_str(yaml)
             .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
@@ -95,10 +127,60 @@ impl ToolExecutor for DispatcherToolExecutor {
             state_store: Box::new(InMemoryStateStore::new()),
             diagnostic: DiagnosticContext::default(),
         };
-        engine
-            .run(&ExecutionContext::default())
-            .await
-            .map_err(to_action_error)?;
+        loop {
+            engine
+                .run(&ExecutionContext::default())
+                .await
+                .map_err(to_action_error)?;
+            let waiting = engine.waiting_human_nodes();
+            if waiting.is_empty() {
+                break;
+            }
+            let handler = self.confirmation_handler.as_ref().ok_or_else(|| {
+                ActionError::new_with(
+                    "CONFIRMATION_REQUIRED",
+                    format!(
+                        "workflow is waiting for confirmation: {}",
+                        waiting.join(", ")
+                    ),
+                    false,
+                )
+            })?;
+            for node_id in waiting {
+                let (action, inputs, risk) = {
+                    let node = engine.plan.nodes.get(&node_id).ok_or_else(|| {
+                        ActionError::new_with(
+                            "MISSING_NODE",
+                            format!("node not found: {node_id}"),
+                            false,
+                        )
+                    })?;
+                    (
+                        node.action.clone(),
+                        node.inputs.clone(),
+                        action_risk(&node.config.policy.risk_level),
+                    )
+                };
+                let approved = handler
+                    .confirm(ConfirmationRequest {
+                        node_id: node_id.clone(),
+                        action: action.clone(),
+                        inputs,
+                        risk,
+                    })
+                    .await?;
+                if approved {
+                    engine.approve_node(&node_id).map_err(to_action_error)?;
+                } else {
+                    engine.reject_node(&node_id).map_err(to_action_error)?;
+                    return Err(ActionError::new_with(
+                        "USER_REJECTED",
+                        format!("user rejected action '{action}'"),
+                        false,
+                    ));
+                }
+            }
+        }
 
         let incomplete: Vec<String> = engine
             .state
@@ -144,6 +226,15 @@ impl ToolExecutor for DispatcherToolExecutor {
             Ok(text) => Ok(text),
             Err(err) => Ok(STANDARD.encode(err.into_bytes())),
         }
+    }
+}
+
+fn action_risk(risk: &RiskLevel) -> ActionRisk {
+    match risk {
+        RiskLevel::Low => ActionRisk::Low,
+        RiskLevel::Medium => ActionRisk::Medium,
+        RiskLevel::High => ActionRisk::High,
+        RiskLevel::Critical => ActionRisk::Critical,
     }
 }
 

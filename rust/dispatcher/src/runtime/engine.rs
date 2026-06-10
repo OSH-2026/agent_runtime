@@ -1,13 +1,13 @@
 use crate::error::DispatcherError;
 use crate::executor::{ExecutionResult, Executor, Outcome};
+use crate::plan::validate_dag;
 use crate::plan::{ExecutionPlan, NodeId, SideEffectLevel};
 use crate::policy::ActionPolicy;
 use crate::recovery::RecoveryStrategy;
 use crate::runtime::{DiagnosticContext, ExecutionContext};
-use crate::scheduler::{compute_ready_set, Dispatcher};
+use crate::scheduler::{Dispatcher, compute_ready_set};
 use crate::state::{GlobalState, NodeState};
 use crate::storage::{AuditEvent, AuditLog, StateStore};
-use crate::plan::validate_dag;
 
 pub struct Engine {
     pub plan: ExecutionPlan,
@@ -54,16 +54,17 @@ impl Engine {
                 }
             }
             Outcome::Failure => {
-                let action = self
-                    .recovery
-                    .handle_failure(&result, &self.plan, &mut self.diagnostic);
+                let action =
+                    self.recovery
+                        .handle_failure(&result, &self.plan, &mut self.diagnostic);
                 match action.level {
                     crate::recovery::RecoveryLevel::Retry => {
                         if let Some(transition) = self.state.mark_retryable(&result.node_id) {
                             self.record_transition(transition);
                         }
                     }
-                    crate::recovery::RecoveryLevel::Patch | crate::recovery::RecoveryLevel::Replan => {
+                    crate::recovery::RecoveryLevel::Patch
+                    | crate::recovery::RecoveryLevel::Replan => {
                         if let Some(transition) = self.state.mark_failed(&result.node_id) {
                             self.record_transition(transition);
                         }
@@ -104,9 +105,7 @@ impl Engine {
                 None => continue,
             };
             if !node.config.policy.can_execute() {
-                if let Some(transition) =
-                    self.state.transition(&node_id, NodeState::WaitingHuman)
-                {
+                if let Some(transition) = self.state.transition(&node_id, NodeState::WaitingHuman) {
                     self.record_transition(transition);
                 }
                 continue;
@@ -133,6 +132,41 @@ impl Engine {
             .get_mut(node_id)
             .ok_or_else(|| DispatcherError::Execution(format!("node not found: {node_id}")))?;
         node.config.policy = policy;
+        Ok(())
+    }
+
+    pub fn waiting_human_nodes(&self) -> Vec<NodeId> {
+        self.state
+            .nodes
+            .iter()
+            .filter_map(|(node_id, state)| {
+                (*state == NodeState::WaitingHuman).then(|| node_id.clone())
+            })
+            .collect()
+    }
+
+    pub fn approve_node(&mut self, node_id: &NodeId) -> Result<(), DispatcherError> {
+        let node = self
+            .plan
+            .nodes
+            .get_mut(node_id)
+            .ok_or_else(|| DispatcherError::Execution(format!("node not found: {node_id}")))?;
+        node.config.policy.requires_confirmation = false;
+        if let Some(transition) = self.state.transition(node_id, NodeState::Pending) {
+            self.record_transition(transition);
+        }
+        Ok(())
+    }
+
+    pub fn reject_node(&mut self, node_id: &NodeId) -> Result<(), DispatcherError> {
+        if !self.plan.nodes.contains_key(node_id) {
+            return Err(DispatcherError::Execution(format!(
+                "node not found: {node_id}"
+            )));
+        }
+        if let Some(transition) = self.state.transition(node_id, NodeState::Cancelled) {
+            self.record_transition(transition);
+        }
         Ok(())
     }
 

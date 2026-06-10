@@ -4,10 +4,12 @@ use actions::{
     ActionRequest, ActionResponse, ActionRisk, ActionSideEffect, ToolExecutor,
 };
 use async_trait::async_trait;
-use dispatcher::{ActionRegistryFactory, DispatcherToolExecutor};
+use dispatcher::{
+    ActionRegistryFactory, ConfirmationHandler, ConfirmationRequest, DispatcherToolExecutor,
+};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct MockGrpcClient;
 
@@ -86,6 +88,19 @@ struct TestRegistryFactory {
     build: fn(Arc<dyn ToolExecutor>) -> ActionRegistry,
 }
 
+struct FixedConfirmationHandler {
+    approved: bool,
+    requests: AtomicUsize,
+}
+
+#[async_trait]
+impl ConfirmationHandler for FixedConfirmationHandler {
+    async fn confirm(&self, _request: ConfirmationRequest) -> Result<bool, ActionError> {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        Ok(self.approved)
+    }
+}
+
 impl ActionRegistryFactory for TestRegistryFactory {
     fn create_registry(&self, tools: Arc<dyn ToolExecutor>) -> Result<ActionRegistry, ActionError> {
         Ok((self.build)(tools))
@@ -125,6 +140,62 @@ steps:
     let output = executor.execute_yaml(yaml).await.expect("execution failed");
 
     assert_eq!(output, "kotlin:hello|subagent:agent kotlin:hello");
+}
+
+#[tokio::test]
+async fn dispatcher_resumes_after_confirmation_is_approved() {
+    let yaml = r#"
+version: 1
+id: confirm-demo
+steps:
+  - id: A
+    action: guarded_echo
+    inputs:
+      payload: "approved"
+"#;
+    let handler = Arc::new(FixedConfirmationHandler {
+        approved: true,
+        requests: AtomicUsize::new(0),
+    });
+    let factory = Arc::new(TestRegistryFactory {
+        build: confirmation_registry,
+    });
+
+    let output = DispatcherToolExecutor::with_confirmation_handler(factory, handler.clone())
+        .execute_yaml(yaml)
+        .await
+        .expect("approved workflow should resume");
+
+    assert_eq!(output, "approved");
+    assert_eq!(handler.requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn dispatcher_stops_after_confirmation_is_rejected() {
+    let yaml = r#"
+version: 1
+id: confirm-demo
+steps:
+  - id: A
+    action: guarded_echo
+    inputs:
+      payload: "rejected"
+"#;
+    let handler = Arc::new(FixedConfirmationHandler {
+        approved: false,
+        requests: AtomicUsize::new(0),
+    });
+    let factory = Arc::new(TestRegistryFactory {
+        build: confirmation_registry,
+    });
+
+    let error = DispatcherToolExecutor::with_confirmation_handler(factory, handler.clone())
+        .execute_yaml(yaml)
+        .await
+        .expect_err("rejected workflow must stop");
+
+    assert_eq!(error.code, "USER_REJECTED");
+    assert_eq!(handler.requests.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -287,6 +358,15 @@ fn failing_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
 fn confirm_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
     let mut registry = ActionRegistry::default();
     registry.register_local_with_metadata("confirm", Arc::new(EchoAction), safe_metadata());
+    registry
+}
+
+fn confirmation_registry(_tools: Arc<dyn ToolExecutor>) -> ActionRegistry {
+    let mut registry = ActionRegistry::default();
+    let mut metadata = safe_metadata();
+    metadata.risk = ActionRisk::High;
+    metadata.requires_confirmation = true;
+    registry.register_local_with_metadata("guarded_echo", Arc::new(EchoAction), metadata);
     registry
 }
 

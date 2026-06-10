@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const sampleWorkflow = `version: 1
 id: device-summary-report
@@ -63,6 +64,14 @@ interface WorkflowResult {
   diagnostics: Array<{ nodeId: string; message: string }>;
 }
 
+interface ConfirmationRequest {
+  requestId: string;
+  nodeId: string;
+  action: string;
+  inputs: unknown;
+  risk: "low" | "medium" | "high" | "critical";
+}
+
 const workflow = document.querySelector<HTMLTextAreaElement>("#workflow")!;
 const grpcEndpoint = document.querySelector<HTMLInputElement>("#grpc-endpoint")!;
 const workflowInput = document.querySelector<HTMLInputElement>("#workflow-input")!;
@@ -73,17 +82,51 @@ const message = document.querySelector<HTMLElement>("#message")!;
 const resultContent = document.querySelector<HTMLElement>("#result-content")!;
 const outputs = document.querySelector<HTMLElement>("#outputs")!;
 const audit = document.querySelector<HTMLOListElement>("#audit")!;
+const confirmationOverlay = document.querySelector<HTMLElement>("#confirmation-overlay")!;
+const confirmationAction = document.querySelector<HTMLElement>("#confirmation-action")!;
+const confirmationMeta = document.querySelector<HTMLElement>("#confirmation-meta")!;
+const confirmationInputs = document.querySelector<HTMLElement>("#confirmation-inputs")!;
+const approveButton = document.querySelector<HTMLButtonElement>("#approve-button")!;
+const rejectButton = document.querySelector<HTMLButtonElement>("#reject-button")!;
+
+let pendingConfirmation: ConfirmationRequest | null = null;
 
 workflow.value = sampleWorkflow;
+
+const confirmationListenerReady = listen<ConfirmationRequest>(
+  "confirmation-request",
+  ({ payload }) => {
+    pendingConfirmation = payload;
+    confirmationAction.textContent = payload.action;
+    confirmationMeta.textContent = `节点 ${payload.nodeId} · ${riskLabel(payload.risk)}`;
+    confirmationInputs.textContent =
+      payload.inputs == null ? "(无输入)" : JSON.stringify(payload.inputs, null, 2);
+    confirmationOverlay.classList.remove("hidden");
+    confirmationOverlay.setAttribute("aria-hidden", "false");
+    setConfirmationButtons(false);
+    status.className = "status waiting";
+    status.textContent = "等待确认";
+    message.textContent = `Action ${payload.action} 需要你的许可。`;
+  },
+);
 
 document.querySelector("#reset-button")?.addEventListener("click", () => {
   workflow.value = sampleWorkflow;
   workflow.focus();
 });
 
+approveButton.addEventListener("click", () => {
+  void resolvePendingConfirmation(true);
+});
+
+rejectButton.addEventListener("click", () => {
+  void resolvePendingConfirmation(false);
+});
+
 runButton.addEventListener("click", async () => {
   setRunning(true);
   try {
+    await confirmationListenerReady;
     const result = await invoke<WorkflowResult>("run_workflow", {
       yaml: workflow.value,
       input: workflowInput.value || null,
@@ -108,6 +151,46 @@ function setRunning(running: boolean) {
     status.textContent = "运行中";
     message.textContent = "Rust dispatcher 正在解析并执行 DAG。";
   }
+}
+
+async function resolvePendingConfirmation(approved: boolean) {
+  const confirmation = pendingConfirmation;
+  if (!confirmation) {
+    return;
+  }
+  setConfirmationButtons(true);
+  try {
+    await invoke("resolve_confirmation", {
+      requestId: confirmation.requestId,
+      approved,
+    });
+    pendingConfirmation = null;
+    confirmationOverlay.classList.add("hidden");
+    confirmationOverlay.setAttribute("aria-hidden", "true");
+    status.className = approved ? "status running" : "status failure";
+    status.textContent = approved ? "继续执行" : "已拒绝";
+    message.textContent = approved
+      ? `已允许 ${confirmation.action}，workflow 正在继续。`
+      : `已拒绝 ${confirmation.action}。`;
+  } catch (error) {
+    message.textContent = `提交确认失败：${String(error)}`;
+    setConfirmationButtons(false);
+  }
+}
+
+function setConfirmationButtons(disabled: boolean) {
+  approveButton.disabled = disabled;
+  rejectButton.disabled = disabled;
+}
+
+function riskLabel(risk: ConfirmationRequest["risk"]) {
+  const labels = {
+    low: "低风险",
+    medium: "中风险",
+    high: "高风险",
+    critical: "严重风险",
+  };
+  return labels[risk];
 }
 
 function renderResult(result: WorkflowResult) {

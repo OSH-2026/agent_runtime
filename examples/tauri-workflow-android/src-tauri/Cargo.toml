@@ -24,6 +24,7 @@ serde_json = "1"
 async-trait = "0.1"
 actions = { path = "../../../rust/actions" }
 dispatcher = { path = "../../../rust/dispatcher" }
+tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

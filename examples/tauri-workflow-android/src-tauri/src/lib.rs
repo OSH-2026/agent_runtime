@@ -7,17 +7,87 @@ use actions::{
 use async_trait::async_trait;
 use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use dispatcher::{
-    ActionExecutor, ActionRegistryFactory, DispatcherToolExecutor, Engine, ExecutionContext,
-    GlobalState, InMemoryAuditLog, InMemoryStateStore, NodeState, SimpleRecovery,
-    apply_action_metadata, load_action_flow_from_str,
+    ActionExecutor, ActionRegistryFactory, ConfirmationHandler, ConfirmationRequest,
+    DispatcherToolExecutor, Engine, ExecutionContext, GlobalState, InMemoryAuditLog,
+    InMemoryStateStore, NodeState, SimpleRecovery, apply_action_metadata,
+    load_action_flow_from_str,
 };
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tauri::{AppHandle, Emitter, State};
+use tokio::sync::oneshot;
 
 const ACTION_CATALOG_DOCUMENT: &str =
     include_str!("../../../../docs/action_fabric/action-catalog-for-llm.md");
+
+#[derive(Default)]
+struct ConfirmationBroker {
+    next_id: AtomicU64,
+    pending: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+}
+
+#[derive(Clone)]
+struct TauriConfirmationHandler {
+    app: AppHandle,
+    broker: Arc<ConfirmationBroker>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmationEvent {
+    request_id: String,
+    node_id: String,
+    action: String,
+    inputs: Option<Value>,
+    risk: String,
+}
+
+#[async_trait]
+impl ConfirmationHandler for TauriConfirmationHandler {
+    async fn confirm(&self, request: ConfirmationRequest) -> Result<bool, ActionError> {
+        let request_id = format!(
+            "confirmation-{}",
+            self.broker.next_id.fetch_add(1, Ordering::Relaxed)
+        );
+        let (sender, receiver) = oneshot::channel();
+        self.broker
+            .pending
+            .lock()
+            .map_err(|_| ActionError::new("confirmation state lock poisoned"))?
+            .insert(request_id.clone(), sender);
+
+        let event = ConfirmationEvent {
+            request_id: request_id.clone(),
+            node_id: request.node_id,
+            action: request.action,
+            inputs: request.inputs,
+            risk: risk_name(request.risk).to_string(),
+        };
+        if let Err(error) = self.app.emit("confirmation-request", event) {
+            if let Ok(mut pending) = self.broker.pending.lock() {
+                pending.remove(&request_id);
+            }
+            return Err(ActionError::new_with(
+                "CONFIRMATION_UI",
+                error.to_string(),
+                false,
+            ));
+        }
+
+        receiver.await.map_err(|_| {
+            ActionError::new_with(
+                "CONFIRMATION_CANCELLED",
+                "confirmation UI closed without a decision",
+                false,
+            )
+        })
+    }
+}
 
 struct TextAction;
 
@@ -133,9 +203,24 @@ struct DiagnosticEntry {
 
 #[tauri::command]
 async fn run_workflow(
+    app: AppHandle,
+    confirmation_broker: State<'_, Arc<ConfirmationBroker>>,
     yaml: String,
     input: Option<String>,
     grpc_endpoint: Option<String>,
+) -> Result<WorkflowResult, String> {
+    let confirmation_handler: Arc<dyn ConfirmationHandler> = Arc::new(TauriConfirmationHandler {
+        app,
+        broker: Arc::clone(confirmation_broker.inner()),
+    });
+    run_workflow_inner(yaml, input, grpc_endpoint, confirmation_handler).await
+}
+
+async fn run_workflow_inner(
+    yaml: String,
+    input: Option<String>,
+    grpc_endpoint: Option<String>,
+    confirmation_handler: Arc<dyn ConfirmationHandler>,
 ) -> Result<WorkflowResult, String> {
     let mut plan = load_action_flow_from_str(&yaml).map_err(|error| error.to_string())?;
     for node in plan.nodes.values_mut() {
@@ -150,7 +235,10 @@ async fn run_workflow(
     let factory: Arc<dyn ActionRegistryFactory> = Arc::new(TauriRegistryFactory {
         grpc_client: GrpcClient::new(grpc_endpoint),
     });
-    let tools: Arc<dyn ToolExecutor> = Arc::new(DispatcherToolExecutor::new(Arc::clone(&factory)));
+    let tools: Arc<dyn ToolExecutor> = Arc::new(DispatcherToolExecutor::with_confirmation_handler(
+        Arc::clone(&factory),
+        Arc::clone(&confirmation_handler),
+    ));
     let registry = Arc::new(
         factory
             .create_registry(tools)
@@ -173,12 +261,10 @@ async fn run_workflow(
         plan,
     };
 
-    engine
-        .run(&ExecutionContext {
-            inputs: input.unwrap_or_default().into_bytes(),
-        })
-        .await
-        .map_err(|error| error.to_string())?;
+    let context = ExecutionContext {
+        inputs: input.unwrap_or_default().into_bytes(),
+    };
+    run_with_confirmations(&mut engine, &context, confirmation_handler.as_ref()).await?;
 
     let node_states = engine
         .state
@@ -226,6 +312,78 @@ async fn run_workflow(
     })
 }
 
+async fn run_with_confirmations(
+    engine: &mut Engine,
+    context: &ExecutionContext,
+    confirmation_handler: &dyn ConfirmationHandler,
+) -> Result<(), String> {
+    loop {
+        engine
+            .run(context)
+            .await
+            .map_err(|error| error.to_string())?;
+        let waiting = engine.waiting_human_nodes();
+        if waiting.is_empty() {
+            return Ok(());
+        }
+        for node_id in waiting {
+            let node = engine
+                .plan
+                .nodes
+                .get(&node_id)
+                .ok_or_else(|| format!("node not found: {node_id}"))?;
+            let action = node.action.clone();
+            let approved = confirmation_handler
+                .confirm(ConfirmationRequest {
+                    node_id: node_id.clone(),
+                    action: action.clone(),
+                    inputs: node.inputs.clone(),
+                    risk: metadata_for_action(&action)
+                        .map(|metadata| metadata.risk)
+                        .unwrap_or(actions::ActionRisk::High),
+                })
+                .await
+                .map_err(|error| error.message)?;
+            if approved {
+                engine
+                    .approve_node(&node_id)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                engine
+                    .reject_node(&node_id)
+                    .map_err(|error| error.to_string())?;
+                return Err(format!("用户拒绝执行 action '{action}'"));
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn resolve_confirmation(
+    confirmation_broker: State<'_, Arc<ConfirmationBroker>>,
+    request_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    let sender = confirmation_broker
+        .pending
+        .lock()
+        .map_err(|_| "confirmation state lock poisoned".to_string())?
+        .remove(&request_id)
+        .ok_or_else(|| format!("confirmation request not found: {request_id}"))?;
+    sender
+        .send(approved)
+        .map_err(|_| "workflow is no longer waiting for confirmation".to_string())
+}
+
+fn risk_name(risk: actions::ActionRisk) -> &'static str {
+    match risk {
+        actions::ActionRisk::Low => "low",
+        actions::ActionRisk::Medium => "medium",
+        actions::ActionRisk::High => "high",
+        actions::ActionRisk::Critical => "critical",
+    }
+}
+
 fn subagent_action_catalog() -> String {
     ACTION_CATALOG_DOCUMENT
         .split_once("## 内置 Action（39）")
@@ -257,7 +415,8 @@ fn state_name(state: NodeState) -> &'static str {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![run_workflow])
+        .manage(Arc::new(ConfirmationBroker::default()))
+        .invoke_handler(tauri::generate_handler![run_workflow, resolve_confirmation])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -266,9 +425,18 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    struct ApproveAll;
+
+    #[async_trait]
+    impl ConfirmationHandler for ApproveAll {
+        async fn confirm(&self, _request: ConfirmationRequest) -> Result<bool, ActionError> {
+            Ok(true)
+        }
+    }
+
     #[tokio::test]
     async fn executes_yaml_with_references() {
-        let result = run_workflow(
+        let result = run_workflow_inner(
             r#"
 version: 1
 id: test-flow
@@ -285,6 +453,7 @@ steps:
             .to_string(),
             None,
             None,
+            Arc::new(ApproveAll),
         )
         .await
         .expect("workflow should execute");
