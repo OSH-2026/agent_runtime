@@ -157,7 +157,8 @@ agent_runtime/
 ├── examples/
 │   ├── android-action-runtime/     # Kotlin Runtime 真机冒烟测试应用
 │   ├── dispatcher_demo/            # Rust DAG 调度示例
-│   └── tauri-workflow-android/     # Workflow 编辑与执行 Android App
+│   ├── tauri-workflow-android/     # Workflow 编辑与执行 Android App
+│   └── tauri-chatbot-android/      # 可循环执行 Workflow 的 Chatbot Android App
 ├── kotlin/
 │   └── kotlin-actions-runtime/     # Android Action Runtime 核心库
 ├── rust/
