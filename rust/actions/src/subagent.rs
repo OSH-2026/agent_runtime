@@ -323,7 +323,7 @@ fn build_system_prompt(config: &SubagentConfig) -> String {
 }
 
 fn normalize_chat_endpoint(base: &str) -> String {
-    let trimmed = base.trim_end_matches('/');
+    let trimmed = base.trim().trim_end_matches('/');
     if trimmed.ends_with("/v1/chat/completions") {
         trimmed.to_string()
     } else if trimmed.ends_with("/v1") {
@@ -412,7 +412,10 @@ fn render_final_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{SubagentConfig, SubagentInput, build_system_prompt, parse_workflow_message};
+    use super::{
+        SubagentConfig, SubagentInput, build_system_prompt, normalize_chat_endpoint,
+        parse_workflow_message,
+    };
 
     fn config(system_prompt: Option<&str>, action_catalog: &str) -> SubagentConfig {
         SubagentConfig {
@@ -452,6 +455,18 @@ mod tests {
         )
         .expect_err("configuration fields must be rejected");
         assert!(error.to_string().contains("unknown field `model`"));
+    }
+
+    #[test]
+    fn normalize_chat_endpoint_preserves_full_chat_completions_url() {
+        assert_eq!(
+            normalize_chat_endpoint("http://10.0.2.2:8080/v1/chat/completions"),
+            "http://10.0.2.2:8080/v1/chat/completions"
+        );
+        assert_eq!(
+            normalize_chat_endpoint(" http://10.0.2.2:8080/v1/chat/completions/ "),
+            "http://10.0.2.2:8080/v1/chat/completions"
+        );
     }
 
     #[test]

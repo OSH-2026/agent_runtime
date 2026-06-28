@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 
 const ACTION_CATALOG_DOCUMENT: &str =
     include_str!("../../../../docs/action_fabric/action-catalog-for-llm.md");
-const DEFAULT_MODEL_URL: &str = "http://10.0.2.2:8000";
+const DEFAULT_MODEL_URL: &str = "http://10.0.2.2:8080/v1/chat/completions";
 const DEFAULT_MODEL: &str = "local-model";
 const DEFAULT_GRPC_ENDPOINT: &str = "127.0.0.1:8080";
 const MAX_CHAT_TURNS: u32 = 16;
@@ -230,7 +230,7 @@ impl ActionRegistryFactory for ChatRegistryFactory {
                 tools,
                 SubagentConfig {
                     model: DEFAULT_MODEL.to_string(),
-                    base_url: "http://10.0.2.2:8080".to_string(),
+                    base_url: DEFAULT_MODEL_URL.to_string(),
                     api_key: None,
                     max_turns: 4,
                     temperature: 0.2,
@@ -1044,6 +1044,19 @@ outputContract: json
 
         assert_eq!(message, "摘要：网络正常；状态：电量充足");
         assert!(render_final_message("{missing}", &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn default_model_url_is_chat_completions_endpoint() {
+        assert_eq!(
+            DEFAULT_MODEL_URL,
+            "http://10.0.2.2:8080/v1/chat/completions"
+        );
+        assert_eq!(normalize_chat_endpoint(DEFAULT_MODEL_URL), DEFAULT_MODEL_URL);
+        assert_eq!(
+            normalize_chat_endpoint(" http://10.0.2.2:8080/v1/chat/completions/ "),
+            DEFAULT_MODEL_URL
+        );
     }
 
     #[test]
