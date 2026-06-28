@@ -139,7 +139,14 @@ steps:
     let executor = executor(full_registry);
     let output = executor.execute_yaml(yaml).await.expect("execution failed");
 
-    assert_eq!(output, "kotlin:hello|subagent:agent kotlin:hello");
+    assert_eq!(
+        output.output.as_str(),
+        "kotlin:hello|subagent:agent kotlin:hello"
+    );
+    assert_eq!(
+        output.node_outputs.get("B").map(String::as_str),
+        Some("kotlin:hello")
+    );
 }
 
 #[tokio::test]
@@ -166,7 +173,7 @@ steps:
         .await
         .expect("approved workflow should resume");
 
-    assert_eq!(output, "approved");
+    assert_eq!(output.output.as_str(), "approved");
     assert_eq!(handler.requests.load(Ordering::SeqCst), 1);
 }
 
@@ -234,6 +241,60 @@ steps:
 }
 
 #[tokio::test]
+async fn dispatcher_rejects_final_template_before_execution() {
+    let yaml = r#"
+version: 1
+id: demo
+steps:
+  - id: A
+    action: echo
+    inputs:
+      payload: "hello"
+"#;
+    let error = executor(full_registry)
+        .validate_workflow_message(yaml, "Done {Missing}")
+        .await
+        .expect_err("unknown final-message node should be rejected");
+
+    assert_eq!(error.code, "FINAL_MESSAGE_TEMPLATE");
+    assert!(error.message.contains("unknown node 'Missing'"));
+}
+
+#[tokio::test]
+async fn dispatcher_allows_multiple_terminal_nodes_without_output() {
+    let yaml = r#"
+version: 1
+id: demo
+steps:
+  - id: A
+    action: echo
+    inputs:
+      payload: "left"
+  - id: B
+    action: echo
+    inputs:
+      payload: "right"
+"#;
+    let executor = executor(full_registry);
+
+    executor
+        .validate_workflow_message(yaml, "Done {A} and {B}")
+        .await
+        .expect("final template should validate against all nodes");
+    let output = executor.execute_yaml(yaml).await.expect("execution failed");
+
+    assert_eq!(output.output, "");
+    assert_eq!(
+        output.node_outputs.get("A").map(String::as_str),
+        Some("left")
+    );
+    assert_eq!(
+        output.node_outputs.get("B").map(String::as_str),
+        Some("right")
+    );
+}
+
+#[tokio::test]
 async fn dispatcher_rejects_policy_in_generated_yaml() {
     let yaml = r#"
 version: 1
@@ -274,7 +335,7 @@ steps:
 "#;
         match self.tools.execute_yaml(yaml).await {
             Ok(output) => ActionOutput {
-                payload: output.into_bytes(),
+                payload: output.output.into_bytes(),
                 error: None,
             },
             Err(error) => ActionOutput {
@@ -322,7 +383,7 @@ steps:
         .await
         .expect("recursive execution should succeed");
 
-    assert_eq!(output, "nested");
+    assert_eq!(output.output.as_str(), "nested");
     assert_eq!(creations.load(Ordering::SeqCst), 2);
 }
 

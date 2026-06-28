@@ -1,12 +1,13 @@
-use actions::subagent::ToolExecutor;
+use actions::subagent::{ToolExecution, ToolExecutor};
 use actions::{ActionError, ActionMetadata, ActionRegistry, ActionRisk, ActionSideEffect};
 use async_trait::async_trait;
 use serde_yaml::{self, Value};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::executor::ActionExecutor;
 use crate::loader::{ActionFlowFile, load_action_flow_from_str};
-use crate::plan::SideEffectLevel;
+use crate::plan::{ExecutionPlan, SideEffectLevel};
 use crate::policy::RiskLevel;
 use crate::recovery::SimpleRecovery;
 use crate::runtime::{DiagnosticContext, Engine, ExecutionContext};
@@ -63,7 +64,20 @@ impl DispatcherToolExecutor {
 
 #[async_trait]
 impl ToolExecutor for DispatcherToolExecutor {
-    async fn execute_yaml(&self, yaml: &str) -> Result<String, ActionError> {
+    async fn validate_workflow_message(
+        &self,
+        yaml: &str,
+        final_message_template: &str,
+    ) -> Result<(), ActionError> {
+        let plan = load_subagent_plan(yaml)?;
+        validate_final_message_template(
+            final_message_template,
+            plan.nodes.keys().map(String::as_str),
+        )
+        .map_err(|message| ActionError::new_with("FINAL_MESSAGE_TEMPLATE", message, false))
+    }
+
+    async fn execute_yaml(&self, yaml: &str) -> Result<ToolExecution, ActionError> {
         let recursive_tools: Arc<dyn ToolExecutor> = match &self.confirmation_handler {
             Some(handler) => Arc::new(DispatcherToolExecutor::with_confirmation_handler(
                 Arc::clone(&self.factory),
@@ -72,27 +86,7 @@ impl ToolExecutor for DispatcherToolExecutor {
             None => Arc::new(DispatcherToolExecutor::new(Arc::clone(&self.factory))),
         };
         let registry = Arc::new(self.factory.create_registry(recursive_tools)?);
-        let raw_flow: Value = serde_yaml::from_str(yaml)
-            .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
-        reject_subagent_policy_fields(&raw_flow)?;
-        let flow: ActionFlowFile = serde_yaml::from_value(raw_flow)
-            .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
-        if flow.steps.is_empty() {
-            return Err(ActionError::new_with(
-                "INVALID_FORMAT",
-                "flow has no steps",
-                false,
-            ));
-        }
-        if flow.steps.len() > MAX_TOOL_STEPS {
-            return Err(ActionError::new_with(
-                "RESOURCE_LIMIT",
-                format!("flow exceeds maximum of {MAX_TOOL_STEPS} steps"),
-                false,
-            ));
-        }
-
-        let mut plan = load_action_flow_from_str(yaml).map_err(to_action_error)?;
+        let mut plan = load_subagent_plan(yaml)?;
         for node in plan.nodes.values_mut() {
             let metadata = registry.trusted_metadata(&node.action).ok_or_else(|| {
                 ActionError::new_with(
@@ -203,17 +197,38 @@ impl ToolExecutor for DispatcherToolExecutor {
             ));
         }
 
-        let output = output_reader
-            .outputs()
-            .get(&plan.output_node)
-            .cloned()
-            .ok_or_else(|| {
+        let raw_outputs = output_reader.outputs();
+        if let Some(output_node) = &plan.output_node {
+            let output = raw_outputs.get(output_node).cloned().ok_or_else(|| {
                 ActionError::new_with(
                     "OUTPUT_MISSING",
-                    format!("output not found for node '{}'", plan.output_node),
+                    format!("output not found for node '{output_node}'"),
                     false,
                 )
             })?;
+            if output.len() > MAX_TOOL_OUTPUT_BYTES {
+                return Err(ActionError::new_with(
+                    "RESOURCE_LIMIT",
+                    format!("tool output exceeds maximum of {MAX_TOOL_OUTPUT_BYTES} bytes"),
+                    false,
+                ));
+            }
+        }
+
+        let node_outputs = raw_outputs
+            .iter()
+            .map(|(id, bytes)| (id.clone(), bytes_to_string(bytes)))
+            .collect::<BTreeMap<_, _>>();
+        let output = match &plan.output_node {
+            Some(output_node) => node_outputs.get(output_node).cloned().ok_or_else(|| {
+                ActionError::new_with(
+                    "OUTPUT_MISSING",
+                    format!("output not found for node '{output_node}'"),
+                    false,
+                )
+            })?,
+            None => String::new(),
+        };
         if output.len() > MAX_TOOL_OUTPUT_BYTES {
             return Err(ActionError::new_with(
                 "RESOURCE_LIMIT",
@@ -222,11 +237,61 @@ impl ToolExecutor for DispatcherToolExecutor {
             ));
         }
 
-        match String::from_utf8(output) {
-            Ok(text) => Ok(text),
-            Err(err) => Ok(STANDARD.encode(err.into_bytes())),
-        }
+        Ok(ToolExecution {
+            output,
+            node_outputs,
+        })
     }
+}
+
+fn load_subagent_plan(yaml: &str) -> Result<ExecutionPlan, ActionError> {
+    let raw_flow: Value = serde_yaml::from_str(yaml)
+        .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
+    reject_subagent_policy_fields(&raw_flow)?;
+    let flow: ActionFlowFile = serde_yaml::from_value(raw_flow)
+        .map_err(|err| ActionError::new_with("INVALID_FORMAT", err.to_string(), false))?;
+    if flow.steps.is_empty() {
+        return Err(ActionError::new_with(
+            "INVALID_FORMAT",
+            "flow has no steps",
+            false,
+        ));
+    }
+    if flow.steps.len() > MAX_TOOL_STEPS {
+        return Err(ActionError::new_with(
+            "RESOURCE_LIMIT",
+            format!("flow exceeds maximum of {MAX_TOOL_STEPS} steps"),
+            false,
+        ));
+    }
+    load_action_flow_from_str(yaml).map_err(to_action_error)
+}
+
+fn validate_final_message_template<'a>(
+    template: &str,
+    node_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let node_ids = node_ids
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let mut cursor = 0usize;
+    while let Some(start) = template[cursor..].find('{') {
+        let start_index = cursor + start;
+        let name_start = start_index + 1;
+        let end_index = template[name_start..]
+            .find('}')
+            .map(|offset| name_start + offset)
+            .ok_or_else(|| format!("unclosed placeholder in final message: {template}"))?;
+        let node_id = template[name_start..end_index].trim();
+        if node_id.is_empty() {
+            return Err("empty placeholder in final message".to_string());
+        }
+        if !node_ids.contains(node_id) {
+            return Err(format!("final message references unknown node '{node_id}'"));
+        }
+        cursor = end_index + 1;
+    }
+    Ok(())
 }
 
 fn action_risk(risk: &RiskLevel) -> ActionRisk {
@@ -235,6 +300,13 @@ fn action_risk(risk: &RiskLevel) -> ActionRisk {
         RiskLevel::Medium => ActionRisk::Medium,
         RiskLevel::High => ActionRisk::High,
         RiskLevel::Critical => ActionRisk::Critical,
+    }
+}
+
+fn bytes_to_string(bytes: &[u8]) -> String {
+    match String::from_utf8(bytes.to_vec()) {
+        Ok(text) => text,
+        Err(err) => STANDARD.encode(err.into_bytes()),
     }
 }
 

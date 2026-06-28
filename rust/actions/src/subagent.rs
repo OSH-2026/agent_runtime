@@ -4,10 +4,37 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a subagent that can call tools by emitting YAML action flows.\n\nWhen you need a tool, respond with a YAML action flow using this schema:\n\nversion: 1\nid: demo\noutput: B\nsteps:\n  - id: A\n    action: text\n    inputs:\n      value: \"hello\"\n  - id: B\n    action: uppercase\n    inputs:\n      text: \"${A}\"\n\nOnly output the YAML block when requesting tools. Tool results are JSON objects with ok, output, code, message, and retryable fields. Do not include execution policy fields in tool YAML; policies are supplied by the trusted action registry.\n\nAny response that is not a YAML action flow is treated as the final answer.\n";
+const DEFAULT_SYSTEM_PROMPT: &str = r#"You are a subagent that can call tools by emitting fenced YAML workflows.
+
+Reply in exactly one of these formats:
+1. Plain final answer: if the first non-whitespace characters are not ```, the response is returned as-is. Plain answers do not execute workflows and do not process {node_id} placeholders.
+2. Workflow request: start with a fenced YAML block, then place the final answer template after the closing fence. The final answer template is returned only if the workflow fully executes. Use {node_id} placeholders to insert complete outputs from executed nodes.
+
+Workflow response format:
+```yaml
+version: 1
+id: demo
+steps:
+  - id: A
+    action: text
+    inputs:
+      value: "hello"
+  - id: B
+    action: uppercase
+    inputs:
+      text: "${A}"
+```
+Final answer with data from {B}.
+
+Do not include execution policy fields in workflow YAML; policies are supplied by the trusted action registry.
+Do not include top-level output, outputContract, or per-step outputs fields; the final message template decides what is returned.
+Do not add extra fields to text actions; text only accepts value.
+If a workflow fails, you receive a tool message with ok, code, message, and retryable fields. Then either return a corrected workflow response or a plain final answer.
+"#;
 const DEFAULT_MAX_TURNS: u32 = 8;
 const MAX_TURNS: u32 = 32;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -59,7 +86,29 @@ struct ChatChoice {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    async fn execute_yaml(&self, yaml: &str) -> Result<String, ActionError>;
+    async fn validate_workflow_message(
+        &self,
+        yaml: &str,
+        final_message_template: &str,
+    ) -> Result<(), ActionError>;
+
+    async fn execute_yaml(&self, yaml: &str) -> Result<ToolExecution, ActionError>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolExecution {
+    pub output: String,
+    #[serde(default, rename = "nodeOutputs")]
+    pub node_outputs: BTreeMap<String, String>,
+}
+
+impl ToolExecution {
+    pub fn from_output(output: String) -> Self {
+        Self {
+            output,
+            node_outputs: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -142,28 +191,68 @@ impl SubagentAction {
             let assistant = self.call_llm(&history).await?;
             history.push(assistant.clone());
 
-            if let Some(yaml) = extract_yaml(&assistant.content) {
-                let tool_result = match self.executor.execute_yaml(&yaml).await {
-                    Ok(output) => json!({
-                        "ok": true,
-                        "output": output,
-                    }),
-                    Err(error) => json!({
-                        "ok": false,
-                        "code": error.code,
-                        "message": error.message,
-                        "retryable": error.retryable,
-                    }),
-                };
-                history.push(ChatMessage {
-                    role: "tool".to_string(),
-                    content: tool_result.to_string(),
-                    name: Some("dispatcher".to_string()),
-                });
-                continue;
-            }
+            match parse_workflow_message(&assistant.content) {
+                Ok(Some(workflow)) => {
+                    if let Err(error) = self
+                        .executor
+                        .validate_workflow_message(&workflow.yaml, &workflow.final_message_template)
+                        .await
+                    {
+                        let tool_result = json!({
+                            "ok": false,
+                            "code": error.code,
+                            "message": error.message,
+                            "retryable": error.retryable,
+                        });
+                        history.push(ChatMessage {
+                            role: "tool".to_string(),
+                            content: tool_result.to_string(),
+                            name: Some("dispatcher".to_string()),
+                        });
+                        continue;
+                    }
 
-            return Ok(assistant.content.into_bytes());
+                    match self.executor.execute_yaml(&workflow.yaml).await {
+                        Ok(execution) => {
+                            let final_message = render_final_message(
+                                &workflow.final_message_template,
+                                &execution.node_outputs,
+                            )
+                            .map_err(|message| {
+                                ActionError::new_with("FINAL_MESSAGE_TEMPLATE", message, false)
+                            })?;
+                            return Ok(final_message.into_bytes());
+                        }
+                        Err(error) => {
+                            let tool_result = json!({
+                                "ok": false,
+                                "code": error.code,
+                                "message": error.message,
+                                "retryable": error.retryable,
+                            });
+                            history.push(ChatMessage {
+                                role: "tool".to_string(),
+                                content: tool_result.to_string(),
+                                name: Some("dispatcher".to_string()),
+                            });
+                        }
+                    }
+                }
+                Ok(None) => return Ok(assistant.content.into_bytes()),
+                Err(message) => {
+                    let tool_result = json!({
+                        "ok": false,
+                        "code": "INVALID_WORKFLOW_RESPONSE",
+                        "message": message,
+                        "retryable": false,
+                    });
+                    history.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: tool_result.to_string(),
+                        name: Some("dispatcher".to_string()),
+                    });
+                }
+            }
         }
 
         Err(ActionError::new_with(
@@ -244,36 +333,86 @@ fn normalize_chat_endpoint(base: &str) -> String {
     }
 }
 
-fn extract_yaml(content: &str) -> Option<String> {
-    if let Some(block) = extract_fenced_yaml(content) {
-        return Some(block);
-    }
-    if content.trim_start().starts_with("version:") && content.contains("steps:") {
-        return Some(content.trim().to_string());
-    }
-    None
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowMessage {
+    yaml: String,
+    final_message_template: String,
 }
 
-fn extract_fenced_yaml(content: &str) -> Option<String> {
-    let mut lines = content.lines();
-    while let Some(line) = lines.next() {
-        if line.trim_start().starts_with("```yaml") {
-            let mut yaml = Vec::new();
-            for inner in lines.by_ref() {
-                if inner.trim_start().starts_with("```") {
-                    break;
-                }
-                yaml.push(inner);
-            }
-            return Some(yaml.join("\n").trim().to_string());
-        }
+fn parse_workflow_message(content: &str) -> Result<Option<WorkflowMessage>, String> {
+    let content = content.trim_start();
+    if !content.starts_with("```") {
+        return Ok(None);
     }
-    None
+    let opening_line_end = content.find('\n').ok_or_else(|| {
+        "workflow response must start with a fenced YAML block and include a final message"
+            .to_string()
+    })?;
+    let fence_label = content[3..opening_line_end].trim();
+    if !fence_label.is_empty()
+        && !fence_label.eq_ignore_ascii_case("yaml")
+        && !fence_label.eq_ignore_ascii_case("yml")
+    {
+        return Err("workflow fence must be ```yaml, ```yml, or ```".to_string());
+    }
+
+    let body = &content[opening_line_end + 1..];
+    let mut cursor = 0usize;
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']).trim_start();
+        if trimmed.starts_with("```") {
+            let yaml = body[..cursor].trim();
+            let final_message_template = body[cursor + line.len()..].trim();
+            if yaml.is_empty() {
+                return Err("workflow YAML block must not be empty".to_string());
+            }
+            if final_message_template.is_empty() {
+                return Err(
+                    "workflow response must include a final message after the closing fence"
+                        .to_string(),
+                );
+            }
+            return Ok(Some(WorkflowMessage {
+                yaml: yaml.to_string(),
+                final_message_template: final_message_template.to_string(),
+            }));
+        }
+        cursor += line.len();
+    }
+    Err("workflow response is missing the closing ``` fence".to_string())
+}
+
+fn render_final_message(
+    template: &str,
+    node_outputs: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut result = String::new();
+    let mut cursor = 0usize;
+    while let Some(start) = template[cursor..].find('{') {
+        let start_index = cursor + start;
+        result.push_str(&template[cursor..start_index]);
+        let name_start = start_index + 1;
+        let end_index = template[name_start..]
+            .find('}')
+            .map(|offset| name_start + offset)
+            .ok_or_else(|| format!("unclosed placeholder in final message: {template}"))?;
+        let node_id = template[name_start..end_index].trim();
+        if node_id.is_empty() {
+            return Err("empty placeholder in final message".to_string());
+        }
+        let output = node_outputs
+            .get(node_id)
+            .ok_or_else(|| format!("final message references unknown node '{node_id}'"))?;
+        result.push_str(output);
+        cursor = end_index + 1;
+    }
+    result.push_str(&template[cursor..]);
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SubagentConfig, SubagentInput, build_system_prompt, extract_yaml};
+    use super::{SubagentConfig, SubagentInput, build_system_prompt, parse_workflow_message};
 
     fn config(system_prompt: Option<&str>, action_catalog: &str) -> SubagentConfig {
         SubagentConfig {
@@ -289,9 +428,17 @@ mod tests {
     }
 
     #[test]
-    fn extracts_fenced_yaml() {
-        let yaml = extract_yaml("```yaml\nversion: 1\nsteps: []\n```").expect("yaml expected");
-        assert_eq!(yaml, "version: 1\nsteps: []");
+    fn parses_workflow_response_only_when_it_starts_with_fence() {
+        let message = parse_workflow_message("```yaml\nversion: 1\nsteps: []\n```\nDone {A}")
+            .expect("valid workflow response")
+            .expect("workflow expected");
+        assert_eq!(message.yaml, "version: 1\nsteps: []");
+        assert_eq!(message.final_message_template, "Done {A}");
+        assert!(
+            parse_workflow_message("version: 1\nsteps: []")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -316,6 +463,7 @@ mod tests {
 
         assert!(prompt.contains("Only call actions and use input fields listed here"));
         assert!(prompt.contains("device_info({includeHardware?:bool=true})"));
+        assert!(prompt.contains("Workflow response format"));
     }
 
     #[test]
