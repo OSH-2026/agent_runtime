@@ -15,7 +15,7 @@ use dispatcher::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,31 +33,73 @@ const REQUEST_TIMEOUT_MS: u64 = 120_000;
 const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Fabric 助手。
 
 你可以用两种方式回复：
-1. 如果不需要操作设备，直接回复用户自然语言。任何普通文本都会结束本轮 agent loop。
-2. 如果需要读取状态或执行操作，只回复一个 ActionFlow YAML。workflow 成功后，系统会把其顶层 output 直接作为最终消息返回给用户，本轮立即结束，你不会再收到成功结果。只有 workflow 失败时，系统才会把已执行节点和诊断作为 tool 消息返回给你，供你修正 workflow 或向用户解释。
+1. 如果不需要操作设备，直接回复用户自然语言。第一个非空字符不是 ``` 的任何回复都会作为 plain message 结束本轮 agent loop；plain message 不会执行 workflow，也不会处理 `{node_id}` 占位符。
+2. 如果需要读取状态或执行操作，回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。workflow 完整成功后，系统才会渲染并返回这段最终消息模板；只有 workflow 失败时，系统才会把已执行节点和诊断作为 tool 消息返回给你，供你修正 workflow 或向用户解释。
 
-ActionFlow 基本格式：
+Workflow response 基本格式：
+```yaml
 version: 1
 id: concise-unique-id
-output: final_step
 steps:
   - id: step_id
     action: action_name
     inputs:
       field: value
-outputContract: json
+```
+最终消息模板，只有 workflow 完整执行后才会返回。可用 `{step_id}` 插入已执行节点的完整输出。
 
 严格规则：
-- 生成 workflow 时，整条回复必须是可直接解析的纯 YAML。第一个非空字符必须属于 `version: 1` 这一行。
-- 禁止在 YAML 前后添加 `ActionFlow YAML:`、`YAML:`、说明文字、总结、注释或任何其他前后缀。
-- 禁止使用 Markdown 代码围栏（例如 ```yaml）。
+- 生成 workflow 时，整条回复的第一个非空字符必须是开头代码围栏 ```；围栏中放 ActionFlow YAML，closing fence 后放最终消息模板。
+- 如果省略开头 ```，系统会把整条回复当作 plain message，不执行 workflow，也不处理 `{}`。
+- 不要在开头围栏前添加 `ActionFlow YAML:`、`YAML:`、说明文字、总结、注释或任何其他前缀。
+- 最终消息模板只支持 `{step_id}` 占位符，表示插入该节点的完整输出；不支持字段级引用或在 plain message 中处理占位符。
 - 只能使用可信 action catalog 中存在的 action 和输入字段。
 - 不要生成 policy、sideEffect、retryBudget 或 timeoutMs，策略由可信 registry 注入。
 - 用 ${step_id} 引用上游完整输出；不支持字段级引用。
-- 多个无后继节点时必须设置顶层 output。
+- 不要为了指定最终回复而生成顶层 output；最终回复由 closing fence 后的最终消息模板决定。
 - 可并行的只读操作应写成无依赖步骤。
-- workflow 的顶层 output 必须指向你希望直接展示给用户的最终节点。该节点输出应当本身就是适合用户阅读的最终结果。
-- 收到失败 tool 消息后不要机械复述 JSON；可以生成修正后的纯 YAML workflow，或用普通文本清晰解释失败情况。"#;
+- 最重要：用户将看到的是 closing fence 后的最终消息模板渲染结果，不是 workflow 顶层 output。成功后没有额外的模型审查、改写或总结步骤。
+- 不要给 text action 添加 value 以外的字段；text 只接受 value。
+- 对设置闹钟、启动应用、复制剪贴板等操作：workflow 中执行设备 action；把简洁自然的完成确认写在 closing fence 后。不要为了建立最终回复依赖而增加 text 节点。
+- 对设备报告、状态摘要等查询：先读取数据，再用 subagent 节点把 `${step_id}` 结果整理成可直接展示的自然语言；最终消息模板通常直接写 `{final_report}`。
+- 最终消息模板不要直接插入返回 JSON、状态对象、路径或其他机器数据的设备 action 输出，例如 `{set_alarm_result}`、`{device}`、`{network}`，除非用户明确要求这些技术信息。
+- 最终消息应直接回答用户原始请求，使用用户的语言，避免泄露内部 action 名、JSON、resolvedPackage、launched、路径或调度细节，除非用户明确要求这些技术信息。
+- 收到失败 tool 消息后不要机械复述 JSON；可以生成修正后的 fenced workflow response，或用普通文本清晰解释失败情况。
+
+副作用操作范式（用户要求设置 8:30 闹钟）：
+```yaml
+version: 1
+id: set-alarm-830
+steps:
+  - id: set_alarm_result
+    action: set_alarm
+    inputs:
+      hour: 8
+      minutes: 30
+      message: "Alarm at 8:30"
+      skipUi: true
+```
+已为你设置好 8:30 的闹钟。
+
+查询报告范式：
+```yaml
+version: 1
+id: device-report
+steps:
+  - id: device
+    action: device_info
+    inputs:
+      includeHardware: true
+  - id: network
+    action: network_status
+    inputs:
+      includeDetails: true
+  - id: final_report
+    action: subagent
+    inputs:
+      prompt: "根据以下设备和网络数据，用用户当前语言生成简洁、可直接展示的报告。需要工具时使用 fenced YAML workflow response；最终只返回可直接展示的自然语言，不要返回 JSON。设备：${device}；网络：${network}"
+```
+{final_report}"#;
 
 #[derive(Default)]
 struct ConfirmationBroker {
@@ -125,12 +167,28 @@ impl ConfirmationHandler for TauriConfirmationHandler {
 
 struct TextAction;
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextInput {
+    value: String,
+}
+
 #[async_trait]
 impl Action for TextAction {
     async fn execute(&self, input: ActionInput) -> ActionOutput {
-        ActionOutput {
-            payload: extract_text(&input.payload, "value").into_bytes(),
-            error: None,
+        match serde_json::from_slice::<TextInput>(&input.payload) {
+            Ok(text) => ActionOutput {
+                payload: text.value.into_bytes(),
+                error: None,
+            },
+            Err(error) => ActionOutput {
+                payload: Vec::new(),
+                error: Some(ActionError::new_with(
+                    "INVALID_INPUT",
+                    error.to_string(),
+                    false,
+                )),
+            },
         }
     }
 }
@@ -336,26 +394,91 @@ async fn run_chat_loop(
         .await?;
         history.push(assistant.clone());
 
-        let Some(yaml) = extract_yaml(&assistant.content) else {
-            emit_status(&app, "complete", turn, "模型已返回最终消息", None, None);
-            return Ok(ChatLoopResponse {
-                message: assistant.content,
-                turns: turn,
-                workflows,
-            });
+        let workflow_message = match extract_workflow_message(&assistant.content) {
+            Ok(Some(message)) => message,
+            Ok(None) => {
+                emit_status(&app, "complete", turn, "模型已返回最终消息", None, None);
+                return Ok(ChatLoopResponse {
+                    message: assistant.content,
+                    turns: turn,
+                    workflows,
+                });
+            }
+            Err(error) => {
+                let report = failed_report("invalid-workflow-response", error);
+                emit_status(
+                    &app,
+                    "workflowFailure",
+                    turn,
+                    "workflow 回复格式无效，已反馈模型",
+                    None,
+                    Some(report.clone()),
+                );
+                history.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: workflow_failure_feedback(&report),
+                    name: Some("dispatcher".to_string()),
+                });
+                workflows.push(report);
+                continue;
+            }
         };
+
+        if let Err((plan_id, error)) = preflight_workflow_message(&workflow_message) {
+            let report = failed_report(&plan_id, error);
+            emit_status(
+                &app,
+                "workflowFailure",
+                turn,
+                "workflow 回复格式无效，已反馈模型",
+                Some(workflow_message.yaml.clone()),
+                Some(report.clone()),
+            );
+            history.push(ChatMessage {
+                role: "tool".to_string(),
+                content: workflow_failure_feedback(&report),
+                name: Some("dispatcher".to_string()),
+            });
+            workflows.push(report);
+            continue;
+        }
 
         emit_status(
             &app,
             "workflow",
             turn,
             "模型生成了 workflow",
-            Some(yaml.clone()),
+            Some(workflow_message.yaml.clone()),
             None,
         );
         emit_status(&app, "executing", turn, "正在执行 workflow", None, None);
-        let report =
-            execute_workflow(yaml, &grpc_endpoint, Arc::clone(&confirmation_handler)).await;
+        let mut report = execute_workflow(
+            workflow_message.yaml,
+            &grpc_endpoint,
+            Arc::clone(&confirmation_handler),
+        )
+        .await;
+        let mut final_message_error = None;
+        let rendered_message = if report.success {
+            match render_final_message(
+                &workflow_message.final_message_template,
+                &report.executed_outputs,
+            ) {
+                Ok(message) => {
+                    report.final_output = Some(message.clone());
+                    Some(message)
+                }
+                Err(error) => {
+                    let message = format!("final message template is invalid: {error}");
+                    report.success = false;
+                    report.error = Some(message.clone());
+                    final_message_error = Some(message);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         emit_status(
             &app,
             if report.success {
@@ -365,23 +488,27 @@ async fn run_chat_loop(
             },
             turn,
             if report.success {
-                "workflow 执行成功，output 已作为最终消息返回"
+                "workflow 执行成功，最终消息已渲染"
             } else {
                 "workflow 未完整执行，已反馈已执行节点"
             },
             None,
             Some(report.clone()),
         );
+        if let Some(error) = final_message_error {
+            workflows.push(report);
+            return Err(format!("workflow completed, but {error}"));
+        }
         if report.success {
-            let message = report.final_output.clone().ok_or_else(|| {
-                "successful workflow did not produce its final output".to_string()
+            let message = rendered_message.ok_or_else(|| {
+                "successful workflow did not produce its final message".to_string()
             })?;
             workflows.push(report);
             emit_status(
                 &app,
                 "complete",
                 turn,
-                "workflow output 已直接返回用户",
+                "workflow 最终消息已返回用户",
                 None,
                 None,
             );
@@ -509,7 +636,11 @@ async fn execute_workflow(
         .map(|(id, bytes)| (id, String::from_utf8_lossy(&bytes).into_owned()))
         .collect::<BTreeMap<_, _>>();
     let final_output = success
-        .then(|| executed_outputs.get(&output_node).cloned())
+        .then(|| {
+            output_node
+                .as_ref()
+                .and_then(|node_id| executed_outputs.get(node_id).cloned())
+        })
         .flatten();
     let diagnostics = engine
         .diagnostic
@@ -524,7 +655,7 @@ async fn execute_workflow(
     WorkflowReport {
         plan_id,
         success,
-        output_node: Some(output_node),
+        output_node,
         final_output,
         node_states,
         executed_outputs,
@@ -605,6 +736,7 @@ fn workflow_failure_feedback(report: &WorkflowReport) -> String {
         "executedNodeResults": report.executed_outputs,
         "diagnostics": report.diagnostics,
         "error": report.error,
+        "expectedResponseFormat": "For another workflow attempt, start with ```yaml fenced YAML and put the final message template after the closing fence. For a plain explanation, do not start with ```.",
     })
     .to_string()
 }
@@ -654,35 +786,123 @@ fn extract_text(payload: &[u8], preferred_key: &str) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-fn extract_yaml(content: &str) -> Option<String> {
-    let trimmed = content.trim();
-    if is_action_flow_yaml(trimmed) {
-        return Some(trimmed.to_string());
-    }
-    for prefix in ["ActionFlow YAML:", "ActionFlow YAML："] {
-        if let Some(candidate) = trimmed.strip_prefix(prefix).map(str::trim)
-            && is_action_flow_yaml(candidate)
-        {
-            return Some(candidate.to_string());
-        }
-    }
-    let mut lines = content.lines();
-    while let Some(line) = lines.next() {
-        if line.trim().eq_ignore_ascii_case("```yaml") || line.trim().eq_ignore_ascii_case("```yml")
-        {
-            let block = lines
-                .by_ref()
-                .take_while(|line| !line.trim_start().starts_with("```"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            return (!block.trim().is_empty()).then(|| block.trim().to_string());
-        }
-    }
-    None
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowMessage {
+    yaml: String,
+    final_message_template: String,
 }
 
-fn is_action_flow_yaml(content: &str) -> bool {
-    content.starts_with("version:") && content.contains("\nsteps:")
+fn extract_workflow_message(content: &str) -> Result<Option<WorkflowMessage>, String> {
+    let content = content.trim_start();
+    if !content.starts_with("```") {
+        return Ok(None);
+    }
+    let opening_line_end = content.find('\n').ok_or_else(|| {
+        "workflow response must start with a fenced YAML block and include a final message"
+            .to_string()
+    })?;
+    let fence_label = content[3..opening_line_end].trim();
+    if !fence_label.is_empty()
+        && !fence_label.eq_ignore_ascii_case("yaml")
+        && !fence_label.eq_ignore_ascii_case("yml")
+    {
+        return Err("workflow fence must be ```yaml, ```yml, or ```".to_string());
+    }
+
+    let body = &content[opening_line_end + 1..];
+    let mut cursor = 0usize;
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']).trim_start();
+        if trimmed.starts_with("```") {
+            let yaml = body[..cursor].trim();
+            let final_message_template = body[cursor + line.len()..].trim();
+            if yaml.is_empty() {
+                return Err("workflow YAML block must not be empty".to_string());
+            }
+            if final_message_template.is_empty() {
+                return Err(
+                    "workflow response must include a final message after the closing fence"
+                        .to_string(),
+                );
+            }
+            return Ok(Some(WorkflowMessage {
+                yaml: yaml.to_string(),
+                final_message_template: final_message_template.to_string(),
+            }));
+        }
+        cursor += line.len();
+    }
+    Err("workflow response is missing the closing ``` fence".to_string())
+}
+
+fn preflight_workflow_message(message: &WorkflowMessage) -> Result<(), (String, String)> {
+    let plan = load_action_flow_from_str(&message.yaml)
+        .map_err(|error| ("invalid-workflow-response".to_string(), error.to_string()))?;
+    validate_final_message_template(
+        &message.final_message_template,
+        plan.nodes.keys().map(String::as_str),
+    )
+    .map_err(|error| {
+        (
+            plan.id.clone(),
+            format!("final message template is invalid: {error}"),
+        )
+    })
+}
+
+fn validate_final_message_template<'a>(
+    template: &str,
+    node_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let node_ids = node_ids.into_iter().collect::<HashSet<_>>();
+    let mut cursor = 0usize;
+    while let Some(start) = template[cursor..].find('{') {
+        let start_index = cursor + start;
+        let name_start = start_index + 1;
+        let end_index = template[name_start..]
+            .find('}')
+            .map(|offset| name_start + offset)
+            .ok_or_else(|| format!("unclosed placeholder in final message: {template}"))?;
+        let node_id = template[name_start..end_index].trim();
+        if node_id.is_empty() {
+            return Err("empty placeholder in final message".to_string());
+        }
+        if !node_ids.contains(node_id) {
+            return Err(format!("final message references unknown node '{node_id}'"));
+        }
+        cursor = end_index + 1;
+    }
+    Ok(())
+}
+
+fn render_final_message(
+    template: &str,
+    node_outputs: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    validate_final_message_template(template, node_outputs.keys().map(String::as_str))?;
+
+    let mut result = String::new();
+    let mut cursor = 0usize;
+    while let Some(start) = template[cursor..].find('{') {
+        let start_index = cursor + start;
+        result.push_str(&template[cursor..start_index]);
+        let name_start = start_index + 1;
+        let end_index = template[name_start..]
+            .find('}')
+            .map(|offset| name_start + offset)
+            .ok_or_else(|| format!("unclosed placeholder in final message: {template}"))?;
+        let node_id = template[name_start..end_index].trim();
+        if node_id.is_empty() {
+            return Err("empty placeholder in final message".to_string());
+        }
+        let output = node_outputs
+            .get(node_id)
+            .ok_or_else(|| format!("final message references unknown node '{node_id}'"))?;
+        result.push_str(output);
+        cursor = end_index + 1;
+    }
+    result.push_str(&template[cursor..]);
+    Ok(result)
 }
 
 fn normalize_chat_endpoint(base: &str) -> String {
@@ -765,8 +985,8 @@ mod tests {
     }
 
     #[test]
-    fn extracts_plain_fenced_and_prefixed_yaml() {
-        let prefixed_alarm = r#"ActionFlow YAML:
+    fn parses_fenced_workflow_response_and_treats_bare_yaml_as_plain() {
+        let response = r#"```yaml
 version: 1
 id: set-alarm-830
 output: set_alarm_result
@@ -778,28 +998,75 @@ steps:
       minutes: 30
       message: "Alarm at 8:30"
       skipUi: true
-outputContract: json"#;
+outputContract: json
+```
+已为你设置好 8:30 的闹钟。"#;
 
-        assert!(extract_yaml("普通消息").is_none());
-        assert_eq!(
-            extract_yaml("```yaml\nversion: 1\nsteps: []\n```").as_deref(),
-            Some("version: 1\nsteps: []")
+        assert!(extract_workflow_message("普通消息").unwrap().is_none());
+        assert!(
+            extract_workflow_message("version: 1\nid: demo\nsteps:\n  - id: a")
+                .unwrap()
+                .is_none()
         );
-        assert_eq!(
-            extract_yaml("version: 1\nid: demo\nsteps:\n  - id: a").as_deref(),
-            Some("version: 1\nid: demo\nsteps:\n  - id: a")
-        );
-        let yaml = extract_yaml(prefixed_alarm).expect("prefixed workflow should be extracted");
-        let plan = load_action_flow_from_str(&yaml).expect("extracted workflow should parse");
+        let message = extract_workflow_message(response)
+            .expect("workflow response should parse")
+            .expect("workflow should be detected");
+        assert_eq!(message.final_message_template, "已为你设置好 8:30 的闹钟。");
+        let plan =
+            load_action_flow_from_str(&message.yaml).expect("extracted workflow should parse");
         assert_eq!(plan.id, "set-alarm-830");
-        assert_eq!(plan.output_node, "set_alarm_result");
+        assert_eq!(plan.output_node.as_deref(), Some("set_alarm_result"));
     }
 
     #[test]
-    fn system_prompt_requires_bare_yaml_and_direct_success_output() {
-        assert!(CHAT_SYSTEM_PROMPT.contains("禁止在 YAML 前后添加 `ActionFlow YAML:`"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("顶层 output 直接作为最终消息返回给用户"));
+    fn system_prompt_requires_fenced_workflow_and_final_template() {
+        assert!(CHAT_SYSTEM_PROMPT.contains("第一个非空字符不是 ```"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("如果省略开头 ```"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("closing fence 后"));
         assert!(CHAT_SYSTEM_PROMPT.contains("只有 workflow 失败时"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("不要为了指定最终回复而生成顶层 output"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("已为你设置好 8:30 的闹钟。"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("text 只接受 value"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("{final_report}"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("wait_for"));
+    }
+
+    #[test]
+    fn renders_final_message_from_node_outputs() {
+        let message = render_final_message(
+            "摘要：{report}；状态：{status}",
+            &BTreeMap::from([
+                ("report".to_string(), "网络正常".to_string()),
+                ("status".to_string(), "电量充足".to_string()),
+            ]),
+        )
+        .expect("template should render");
+
+        assert_eq!(message, "摘要：网络正常；状态：电量充足");
+        assert!(render_final_message("{missing}", &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn preflight_rejects_final_message_template_before_execution() {
+        let workflow = WorkflowMessage {
+            yaml: r#"
+version: 1
+id: preflight-test
+output: result
+steps:
+  - id: result
+    action: text
+    inputs:
+      value: done
+"#
+            .to_string(),
+            final_message_template: "完成：{missing}".to_string(),
+        };
+
+        let (plan_id, error) = preflight_workflow_message(&workflow)
+            .expect_err("unknown node should fail before execution");
+        assert_eq!(plan_id, "preflight-test");
+        assert!(error.contains("unknown node 'missing'"));
     }
 
     #[tokio::test]
@@ -827,6 +1094,40 @@ steps:
 
         assert!(report.success);
         assert_eq!(report.final_output.as_deref(), Some("HELLO"));
+    }
+
+    #[tokio::test]
+    async fn text_action_rejects_extra_dependency_fields() {
+        let report = execute_workflow(
+            r#"
+version: 1
+id: friendly-confirmation
+output: final_message
+steps:
+  - id: machine_result
+    action: text
+    inputs:
+      value: '{"launched":true,"resolvedPackage":"internal.package"}'
+  - id: final_message
+    action: text
+    inputs:
+      value: "操作已成功完成。"
+      wait_for: "${machine_result}"
+"#
+            .to_string(),
+            DEFAULT_GRPC_ENDPOINT,
+            Arc::new(ApproveAll),
+        )
+        .await;
+
+        assert!(!report.success);
+        assert!(report.final_output.is_none());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|entry| entry.message.contains("unknown field `wait_for`"))
+        );
     }
 
     #[test]

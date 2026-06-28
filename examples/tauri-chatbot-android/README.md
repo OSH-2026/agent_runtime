@@ -1,13 +1,13 @@
 # Action Chat Android
 
-一个基于 Tauri 2 的 Android chatbot 示例。模型既可以回复普通文本，也可以输出
-ActionFlow YAML。Rust 后端识别 YAML 后调用 `rust/dispatcher` 自动执行：成功结果直接
-返回用户，失败结果才作为 tool 消息继续反馈给模型。
+一个基于 Tauri 2 的 Android chatbot 示例。模型既可以回复普通文本，也可以输出以
+fenced YAML 开头的 workflow response。Rust 后端识别开头围栏后调用 `rust/dispatcher`
+自动执行：成功后渲染围栏后的最终消息模板，失败结果才作为 tool 消息继续反馈给模型。
 
-- workflow 成功：直接把顶层 `output` 指定节点的输出作为最终聊天消息，不再调用模型审查。
+- workflow 成功：渲染 closing fence 后的最终消息模板，不再调用模型审查。
 - workflow 失败或被用户拒绝：反馈节点状态、已执行节点结果和诊断信息。
-- 模型收到失败结果后再次返回 YAML：继续执行并反馈。
-- 模型返回普通文本：结束本轮 agent loop 并展示最终回复。
+- 模型收到失败结果后再次返回 workflow response：继续执行并反馈。
+- 模型返回普通文本：结束本轮 agent loop 并展示最终回复；普通文本中的 `{}` 不会被处理。
 
 模型调用兼容 OpenAI `/v1/chat/completions`。模型地址、模型名、API Key、最大循环轮次和
 Kotlin gRPC endpoint 可在界面设置；这些配置不会暴露给 workflow。workflow action、
@@ -48,10 +48,27 @@ yarn tauri android dev
 后端发送系统提示词和可信 action catalog，然后循环：
 
 1. 调用模型。
-2. 普通文本直接结束。
-3. YAML 交给 dispatcher 校验、构图和执行。
+2. 回复第一个非空字符不是 ```` ``` ```` 时，作为普通文本直接结束，不执行 workflow，也不处理 `{}`。
+3. 回复以 ```` ``` ```` 开头时，抽取 fenced YAML 和 closing fence 后的最终消息模板，YAML 交给 dispatcher 校验、构图和执行。
 4. 高风险 action 通过 Tauri event 请求用户确认。
-5. 成功时直接把最终 output 返回用户并结束。
+5. 成功时渲染最终消息模板中的 `{node_id}`，把渲染结果返回用户并结束。
 6. 失败时把部分执行结果写入 `tool` 消息，回到步骤 1，直到普通文本、成功 workflow 或最大轮次。
 
 界面右侧会实时展示模型轮次、YAML、dispatcher 状态、节点结果和失败诊断。
+
+Workflow 回复格式：
+
+````text
+```yaml
+version: 1
+id: device-report
+steps:
+  - id: final_report
+    action: subagent
+    inputs:
+      prompt: "生成可直接展示的摘要。"
+```
+{final_report}
+````
+
+`text` action 只接受 `value` 字段；不要使用额外字段来制造隐式依赖。

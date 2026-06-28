@@ -203,7 +203,7 @@ function renderAgentStatus(event: AgentStatusEvent) {
     finishActiveActivity(event.kind === "workflowSuccess" ? "success" : "failure");
     activeActivity = createWorkflowActivity(event);
     setConnection(
-      event.kind === "workflowSuccess" ? "output 直接返回" : "失败信息回传模型",
+      event.kind === "workflowSuccess" ? "最终消息已返回" : "失败信息回传模型",
       event.kind === "workflowSuccess" ? "success" : "waiting",
     );
     return;
