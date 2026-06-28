@@ -172,10 +172,10 @@ fn select_output_node(
     requested_output: Option<&str>,
     nodes: &HashMap<NodeId, Node>,
     edges: &HashSet<(NodeId, NodeId)>,
-) -> Result<NodeId, DispatcherError> {
+) -> Result<Option<NodeId>, DispatcherError> {
     if let Some(output) = requested_output {
         if nodes.contains_key(output) {
-            return Ok(output.to_string());
+            return Ok(Some(output.to_string()));
         }
         return Err(PlanError::MissingNode(output.to_string()).into());
     }
@@ -188,13 +188,9 @@ fn select_output_node(
         .collect();
     sinks.sort();
     match sinks.as_slice() {
-        [only] => Ok(only.clone()),
+        [only] => Ok(Some(only.clone())),
         [] => Err(PlanError::InvalidFormat("flow has no output node".to_string()).into()),
-        _ => Err(PlanError::InvalidFormat(format!(
-            "flow has multiple output nodes; set output explicitly: {}",
-            sinks.join(", ")
-        ))
-        .into()),
+        _ => Ok(None),
     }
 }
 

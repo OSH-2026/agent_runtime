@@ -30,11 +30,11 @@ steps:
     assert!(plan.edges.iter().any(|e| e.from == "A" && e.to == "B"));
     assert!(plan.edges.iter().any(|e| e.from == "A" && e.to == "C"));
     assert!(plan.edges.iter().any(|e| e.from == "B" && e.to == "C"));
-    assert_eq!(plan.output_node, "C");
+    assert_eq!(plan.output_node.as_deref(), Some("C"));
 }
 
 #[test]
-fn load_requires_explicit_output_for_multiple_sinks() {
+fn load_allows_omitted_output_for_multiple_sinks() {
     let yaml = r#"
 version: 1
 id: demo
@@ -45,8 +45,8 @@ steps:
     action: echo
 "#;
 
-    let err = load_action_flow_from_str(yaml).expect_err("expected ambiguous output error");
-    assert!(err.to_string().contains("multiple output nodes"));
+    let plan = load_action_flow_from_str(yaml).expect("plan load failed");
+    assert_eq!(plan.output_node, None);
 }
 
 #[test]
@@ -63,7 +63,7 @@ steps:
 "#;
 
     let plan = load_action_flow_from_str(yaml).expect("plan load failed");
-    assert_eq!(plan.output_node, "A");
+    assert_eq!(plan.output_node.as_deref(), Some("A"));
 }
 
 #[test]

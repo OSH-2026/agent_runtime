@@ -7,6 +7,6 @@ pub struct ExecutionPlan {
     pub version: u64,
     pub nodes: HashMap<NodeId, Node>,
     pub edges: Vec<Edge>,
-    pub output_node: NodeId,
+    pub output_node: Option<NodeId>,
     pub output_contract: Contract,
 }
