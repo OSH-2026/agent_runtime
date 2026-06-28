@@ -28,7 +28,7 @@ steps:
     inputs:
       text: "${A}"
 ```
-Final answer with data from {B}.
+The transformed text is {B}.
 
 Do not include execution policy fields in workflow YAML; policies are supplied by the trusted action registry.
 Do not include top-level output, outputContract, or per-step outputs fields; the final message template decides what is returned.
@@ -479,6 +479,7 @@ mod tests {
         assert!(prompt.contains("Only call actions and use input fields listed here"));
         assert!(prompt.contains("device_info({includeHardware?:bool=true})"));
         assert!(prompt.contains("Workflow response format"));
+        assert!(!prompt.contains("Final answer with data"));
     }
 
     #[test]

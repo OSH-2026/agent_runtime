@@ -61,7 +61,7 @@ steps:
 - 最重要：用户将看到的是 closing fence 后的最终消息模板渲染结果，不是 workflow 顶层 output。成功后没有额外的模型审查、改写或总结步骤。
 - 不要给 text action 添加 value 以外的字段；text 只接受 value。
 - 对设置闹钟、启动应用、复制剪贴板等操作：workflow 中执行设备 action；把简洁自然的完成确认写在 closing fence 后。不要为了建立最终回复依赖而增加 text 节点。
-- 对设备报告、状态摘要等查询：先读取数据，再用 subagent 节点把 `${step_id}` 结果整理成可直接展示的自然语言；最终消息模板通常直接写 `{final_report}`。
+- 对设备报告、状态摘要等查询：先读取数据，再用 subagent 节点把 `${step_id}` 结果整理成可直接展示的自然语言；要求 subagent 直接给用户可读内容，不要添加 `Final answer:`、`Answer:`、`Result:`、`摘要：` 等模板前缀；最终消息模板通常直接写 `{final_report}`。
 - 最终消息模板不要直接插入返回 JSON、状态对象、路径或其他机器数据的设备 action 输出，例如 `{set_alarm_result}`、`{device}`、`{network}`，除非用户明确要求这些技术信息。
 - 最终消息应直接回答用户原始请求，使用用户的语言，避免泄露内部 action 名、JSON、resolvedPackage、launched、路径或调度细节，除非用户明确要求这些技术信息。
 - 收到失败 tool 消息后不要机械复述 JSON；可以生成修正后的 fenced workflow response，或用普通文本清晰解释失败情况。
@@ -97,7 +97,7 @@ steps:
   - id: final_report
     action: subagent
     inputs:
-      prompt: "根据以下设备和网络数据，用用户当前语言生成简洁、可直接展示的报告。需要工具时使用 fenced YAML workflow response；最终只返回可直接展示的自然语言，不要返回 JSON。设备：${device}；网络：${network}"
+      prompt: "根据以下设备和网络数据，用用户当前语言生成简洁、自然、可直接展示的报告。不要添加 Final answer、Answer、Result、摘要 等模板前缀；不要返回 JSON；不要暴露无意义的原始字段名或模拟器内部型号，除非用户明确要求技术细节。设备：${device}；网络：${network}"
 ```
 {final_report}"#;
 
@@ -1028,6 +1028,7 @@ outputContract: json
         assert!(CHAT_SYSTEM_PROMPT.contains("已为你设置好 8:30 的闹钟。"));
         assert!(CHAT_SYSTEM_PROMPT.contains("text 只接受 value"));
         assert!(CHAT_SYSTEM_PROMPT.contains("{final_report}"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("不要添加 `Final answer:`"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("wait_for"));
     }
 

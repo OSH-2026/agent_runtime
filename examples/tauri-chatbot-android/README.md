@@ -66,7 +66,7 @@ steps:
   - id: final_report
     action: subagent
     inputs:
-      prompt: "生成可直接展示的摘要。"
+      prompt: "生成自然、可直接展示的摘要，不要添加 Final answer、Answer、Result 等模板前缀。"
 ```
 {final_report}
 ````
