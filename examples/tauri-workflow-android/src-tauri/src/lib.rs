@@ -12,7 +12,7 @@ use dispatcher::{
     InMemoryStateStore, NodeState, SimpleRecovery, apply_action_metadata,
     load_action_flow_from_str,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -91,13 +91,28 @@ impl ConfirmationHandler for TauriConfirmationHandler {
 
 struct TextAction;
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextInput {
+    value: String,
+}
+
 #[async_trait]
 impl Action for TextAction {
     async fn execute(&self, input: ActionInput) -> ActionOutput {
-        let payload = extract_text(&input.payload, "value");
-        ActionOutput {
-            payload: payload.into_bytes(),
-            error: None,
+        match serde_json::from_slice::<TextInput>(&input.payload) {
+            Ok(text) => ActionOutput {
+                payload: text.value.into_bytes(),
+                error: None,
+            },
+            Err(error) => ActionOutput {
+                payload: Vec::new(),
+                error: Some(ActionError::new_with(
+                    "INVALID_INPUT",
+                    error.to_string(),
+                    false,
+                )),
+            },
         }
     }
 }
