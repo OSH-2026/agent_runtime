@@ -8,15 +8,11 @@
 ```yaml
 version: 1
 id: unique-workflow-id
-output: device
 steps:
   - id: device
     action: device_info
     inputs:
       includeHardware: true
-    outputs:
-      contract: json
-outputContract: json
 ```
 
 在字符串中使用 `${step_id}` 引用上游输出并自动建立依赖。当前解析器不支持字段提取：
@@ -153,13 +149,12 @@ CalendarEvent = {id,title,description,location,beginTimeMs,endTimeMs}
 2. 每个 step 的 `id` 必须唯一，只使用字母、数字、下划线或短横线。
 3. 无依赖的只读节点应并行放置；通过 `${step_id}` 建立汇合依赖。
 4. 时间均使用 Unix epoch 毫秒；时区使用 IANA 名称，如 `Asia/Shanghai`。
-5. 不要生成 `policy`、`sideEffect`、`retryBudget` 或 `timeoutMs`。风险、确认、
+5. 不要生成 `output`、`outputContract`、`outputs`、`policy`、`sideEffect`、`retryBudget` 或 `timeoutMs`。风险、确认、
    超时和重试策略由可信 Action Registry 元数据提供。
-6. 多个无后继节点存在时必须用顶层 `output` 指定最终输出节点。
-7. 不要把整个 `${step_id}` JSON 填入要求数字、布尔值或数组的字段。当前引用替换
+6. 不要把整个 `${step_id}` JSON 填入要求数字、布尔值或数组的字段。当前引用替换
     只生成字符串，最适合用于 `text`、`body`、`subject` 等字符串字段。
-8. `http_call` 当前只支持 GET，输入只有 `url`。
-9. 输出必须是纯 YAML，不要使用 Markdown 代码围栏或附加解释。
+7. `http_call` 当前只支持 GET，输入只有 `url`。
+8. 本 catalog 只约束 workflow YAML 内容；外层是否使用 Markdown 围栏由调用方协议决定。
 
 ## 建议的 LLM 指令
 
@@ -167,5 +162,5 @@ CalendarEvent = {id,title,description,location,beginTimeMs,endTimeMs}
 根据用户目标生成 ActionFlow YAML。严格使用 action catalog 中存在的 action 和输入字段。
 优先并行执行互不依赖的只读步骤，用 ${step_id} 创建依赖。不要生成任何执行策略字段，
 这些策略由 Action Registry 提供。不要使用字段级引用，因为当前运行时只会注入整个上游 JSON 字符串。
-最终只输出可解析的 YAML，不输出解释或 Markdown 围栏。
+只在 YAML 内容中放 workflow，不要在 YAML 内添加解释文字。
 ```
