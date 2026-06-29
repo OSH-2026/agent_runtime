@@ -11,6 +11,21 @@
 
 > 端侧 LLM 仓库：[项目仓库链接](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
 
+## 技术定位与核心竞争力
+
+移动端 Agent 的主要瓶颈并不只是模型参数规模，而是端侧推理延迟、请求轮次、上下文长度、内存占用、功耗和系统权限之间的综合约束。传统 Agent Loop 将“模型思考、工具调用、观察结果、再次思考”串行化，每个工具结果都会重新触发一次模型决策。在云端大模型环境下，这种设计尚可依靠算力和网络吞吐缓解；但在 Android 端侧小模型、本地推理或弱网络环境中，多轮推理会快速放大端到端延迟，并引起上下文膨胀和功耗增加。
+
+本项目的核心设计是将传统 Agent Loop 中隐式存在于自然语言上下文里的执行过程，显式提升为可校验、可调度、可审计的 Action DAG。模型负责一次性生成结构化 Workflow，Action Fabric 负责在 runtime 中解析依赖、计算 ready set、并发调度工具节点、保存中间状态、执行策略控制和错误恢复。成功路径不需要反复唤醒模型；只有 workflow 格式错误、节点失败、权限确认或异常恢复时，系统才将必要诊断反馈给模型进行修正。
+
+这一设计带来以下系统级优势：
+
+- **显著减少模型往返次数**：确定性后续动作由 DAG 依赖边表达，工具成功后由 runtime 自动触发下游节点，避免每一步都回到 LLM 重新决定下一步。
+- **降低端到端延迟和尾延迟**：成功路径长度由图结构和工具耗时决定，减少模型推理带来的随机波动，使移动端交互响应更稳定。
+- **天然支持并行调度**：互不依赖的工具节点可在同一 ready set 中并发执行，fan-out/fan-in 类任务的 wall-clock time 接近关键路径耗时，而不是所有步骤耗时之和。
+- **控制上下文和 token 成本**：工具结果进入 runtime 状态存储，节点间通过 `${node}` 引用传递，模型不必反复读取完整历史和大体积 observation。
+- **比 heavy subagent 更轻量**：普通工具节点没有独立 prompt、history 和 todo list，只有输入、输出、依赖与策略；在确定性子任务中可以表达类似任务分解能力，但上下文和模型调用成本更低。
+- **便于工程治理和安全控制**：Action metadata、风险等级、确认门控、重试预算、副作用等级和审计日志由可信 registry 与 dispatcher 统一管理，不依赖模型临场遵守自然语言约束。
+
 ## 项目成果
 
 ### Action Fabric：结构化 Agent 执行系统
@@ -96,6 +111,19 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 → 结果返回并显示于界面
 ```
 
+#### Tauri Chatbot Android App
+
+在 Workflow App 之外，项目进一步实现了 `examples/tauri-chatbot-android`，作为最终形态的 Android Agent 应用原型。该应用将模型对话、Workflow 生成、DAG 执行和结果渲染整合在同一交互入口中：
+
+- 用户以自然语言发起任务，后端向兼容 OpenAI `/v1/chat/completions` 的端侧模型服务发送系统提示词和可信 action catalog。
+- 模型可以直接返回普通文本，也可以返回以 fenced YAML 开头的 workflow response。
+- 当回复以 Workflow 开头时，Rust 后端抽取 ActionFlow YAML，调用 `rust/dispatcher` 完成校验、构图、调度与执行。
+- Workflow 成功时，系统直接渲染 closing fence 后的最终消息模板，不再调用模型进行二次审查或总结。
+- Workflow 失败、用户拒绝或节点异常时，系统将节点状态、已执行结果和诊断信息作为 tool message 反馈给模型，进入有限轮次修正。
+- 高风险 action 通过 Tauri event 触发用户确认；可信 action metadata 不暴露给模型，避免模型自行伪造策略字段。
+
+该应用展示了“模型生成结构化计划、Action Fabric 可靠执行、成功路径自动推进、异常路径有限回退模型”的完整 Agent Loop 改造方案，是项目面向最终用户的主要演示入口。
+
 ### 端侧 LLM：Android 本地推理框架
 
 端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与KV Cache机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
@@ -148,6 +176,39 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 
 端侧模型可以负责意图理解、任务拆解和 Workflow 生成；Action Fabric 接收结构化计划后执行静态校验、并发调度、策略控制和工具调用。该分工避免让语言模型直接承担底层执行控制，使推理与执行能够独立优化、测试和演进。
 
+## 性能评测
+
+为验证 Action DAG 相比传统 Agent Loop 和 heavy subagent 的系统优势，项目新增本地可复现 benchmark：
+
+- Runner：`rust/dispatcher/examples/action_graph_benchmark.rs`
+- 原始结果：`rust/dispatcher/benchmark_results/action_graph_vs_loop/raw.csv`
+- 汇总结果：`rust/dispatcher/benchmark_results/action_graph_vs_loop/summary.csv`
+- 分析报告：`rust/dispatcher/benchmark_results/action_graph_vs_loop/analysis.md`
+
+评测覆盖确定性流水线、fan-out/fan-in 并行、上下文压力、失败恢复和多子任务分解五类工作负载。Action Graph 路径复用项目真实 `dispatcher::Engine`、ready set 调度和 `ActionExecutor::execute_batch`；对照组包括完整 observation Agent Loop、压缩 observation Agent Loop 和 heavy subagent。每组配置重复 3 次，统计端到端延迟、p95 延迟、模型调用次数、工具调用次数、累计上下文输入量、单轮最大上下文、runtime 存储输出大小和最大并发宽度。
+
+### 关键结果
+
+| 场景 | Action Graph | 对照方案 | 主要结论 |
+| --- | ---: | ---: | --- |
+| 12 步确定性流水线 | 433.4 ms | Agent Loop 3760.8 ms | 延迟降低 **88.5%**，模型调用从 12 次降至 1 次 |
+| 16 路 fan-out/fan-in | 327.7 ms | Agent Loop 5316.6 ms | 最大并发宽度从 1 提升至 16，wall-clock time 接近关键路径 |
+| 5 步、每步 1MB 输出 | 5.7 KB prompt | Loop full 10266.1 KB prompt | 大体积工具结果不反复进入模型上下文，显著降低 context 压力 |
+| 20% transient failure | 410.5 ms | Agent Loop 3135.6 ms | 存在失败和重试时，成功节点仍由 runtime 推进 |
+| 5 个子任务 × 3 步 | 347.5 ms | Heavy subagent 1548.0 ms | 模型调用从 17 次降至 1 次，上下文输入量减少 **92.4%** |
+
+### 结果分析
+
+在确定性多步任务中，Agent Loop 的成本随步骤数线性增长，因为每个工具结果都需要重新进入模型决策。Action Graph 将成功路径上的后续动作编码为依赖边，12 步流水线中模型调用次数稳定为 1 次，使端到端延迟从 3760.8 ms 降至 433.4 ms。
+
+在 fan-out/fan-in 场景中，Action Graph 能直接表达独立节点集合，并由 dispatcher 在同一 ready set 中批量异步执行。16 路 fan-out 的最大并发宽度达到 16，而传统 loop 对照组最大并发宽度为 1，说明 DAG 表示不仅减少模型调用，也释放了 runtime 层面的并行执行能力。
+
+在上下文压力场景中，完整 observation loop 会将大体积工具输出持续带入后续模型输入，5 步、每步 1MB 输出时累计 prompt 规模达到 10266.1 KB。即使采用 compact observation，Agent Loop 仍需要 5 次模型调用，累计模型输入约 46.1 KB；Action Graph 只需在规划阶段输入约 5.7 KB，其余中间结果由 runtime 状态保存和传递。
+
+在 heavy subagent 对比中，subagent 能提供任务拆分能力，但每个子任务都需要独立 prompt、上下文和多轮循环。对于确定性子任务，Action Graph 用普通工具节点表达同样依赖结构，避免为每个子任务启动完整 agent loop。在 5 个子任务、每个 3 步的任务分解中，Action Graph 平均 347.5 ms，heavy subagent 平均 1548.0 ms，模型调用次数从 17 次降至 1 次。
+
+这些结果说明，Action Graph 的价值不是单纯“结构更清晰”，而是直接转化为低延迟、低上下文压力、低模型调用次数、更强并行能力和更稳定成功路径的系统收益。对于移动端 Agent，这些指标对应有限算力、有限内存、低功耗和短交互等待时间等核心约束。
+
 ## 仓库结构
 
 ```text
@@ -163,7 +224,11 @@ agent_runtime/
 │   └── kotlin-actions-runtime/     # Android Action Runtime 核心库
 ├── rust/
 │   ├── actions/                    # Action 抽象、gRPC 与远程执行桥
-│   └── dispatcher/                 # DAG 调度、状态、策略与恢复内核
+│   └── dispatcher/                 # DAG 调度、状态、策略、恢复与 benchmark
+│       ├── examples/
+│       │   └── action_graph_benchmark.rs
+│       └── benchmark_results/
+│           └── action_graph_vs_loop/
 ├── LICENSE
 └── README.md
 ```
@@ -175,6 +240,21 @@ agent_runtime/
 ```bash
 cd rust/dispatcher
 cargo test
+```
+
+### Action Graph Benchmark
+
+```bash
+cd rust/dispatcher
+cargo run --example action_graph_benchmark -- --iterations 3
+```
+
+运行后会更新：
+
+```text
+benchmark_results/action_graph_vs_loop/raw.csv
+benchmark_results/action_graph_vs_loop/summary.csv
+benchmark_results/action_graph_vs_loop/analysis.md
 ```
 
 ### Rust 调度示例
@@ -214,11 +294,13 @@ yarn tauri android dev
 | Android Action Runtime 与 59 个 Action | 已完成 |
 | Android Smoke Test App | 已完成 |
 | Tauri Workflow Android App | 已完成并产出 ARM64 APK |
+| Tauri Chatbot Android App | 已完成，可循环执行 Workflow 并展示失败修正 |
+| Action Graph vs Agent Loop benchmark | 已完成，包含原始数据、汇总表和分析报告 |
 | Android 端侧 LLM 基础推理链 | 已完成 |
 | Vulkan GPU 推理优化 | 已完成 |
 | KV Cache、Prefix Cache 与 8K 上下文 | 已完成 |
 | Q8_0 量化推理 | 已完成 |
-| Action Fabric 与端侧 LLM 的产品级整合 | 接口已具备，待联合封装 |
+| Action Fabric 与端侧 LLM 的产品级整合 | 已完成 OpenAI-compatible 接口对接验证，Chatbot App 可接入端侧模型服务生成并执行 Workflow |
 
 ## 会议记录
 
@@ -237,10 +319,11 @@ yarn tauri android dev
 | 9 | 2026-06-03 | 打通 Rust-Kotlin gRPC Remote Action、节点输入引用解析和 Subagent 执行接口，Action Fabric 形成端到端执行链。 |
 | 10 | 2026-06-07 | 端侧 LLM 技术线完成 KV Cache、GPU 推理、量化和性能测试阶段成果整理，双线核心功能均达到展示要求。 |
 | 11 | 2026-06-10 | 完成 Tauri Workflow Android App、真实 Kotlin 工具节点转发与 ARM64 APK 构建，形成可交互的最终演示入口。 |
+| 12 | 2026-06-29 | 完成 Action Chat Android 应用、Action Graph vs Agent Loop benchmark、性能结果汇总和最终展示文档整理。 |
 
 ## 后续工作
 
-项目核心技术链路已经完成。后续工作主要集中在将两个独立仓库封装为统一 Android 应用、补充文件化 Trace Store，以及完善端侧模型自动生成 Workflow 后的联合评测。
+项目核心技术链路、移动端执行入口、端侧模型对接和性能评测已经完成。后续工作主要集中在补充文件化 Trace Store、增加字段级输出引用与局部数据投影、扩展更多 Android 系统能力，并完善端侧模型自动生成 Workflow 后的长任务联合评测。
 
 ## 许可证
 
