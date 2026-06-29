@@ -23,6 +23,8 @@
 - **降低端到端延迟和尾延迟**：成功路径长度由图结构和工具耗时决定，减少模型推理带来的随机波动，使移动端交互响应更稳定。
 - **天然支持并行调度**：互不依赖的工具节点可在同一 ready set 中并发执行，fan-out/fan-in 类任务的 wall-clock time 接近关键路径耗时，而不是所有步骤耗时之和。
 - **控制上下文和 token 成本**：工具结果进入 runtime 状态存储，节点间通过 `${node}` 引用传递，模型不必反复读取完整历史和大体积 observation。
+- **比非结构化零散工具调用更可控**：每个 Action 都有明确名称、类型化输入输出、依赖关系和执行策略，runtime 可以在执行前发现缺参、错参、未知工具和依赖不一致，而不是等模型在多轮自然语言交互中逐步暴露问题。
+- **便于复现、测试和演进**：结构化 Workflow 可以作为稳定工件保存、回放、比较和 benchmark，工具 schema 与 action catalog 也能独立版本化；相比散落在对话历史中的临时工具调用，工程团队更容易做回归测试、能力扩展和故障定位。
 - **比 heavy subagent 更轻量**：普通工具节点没有独立 prompt、history 和 todo list，只有输入、输出、依赖与策略；在确定性子任务中可以表达类似任务分解能力，但上下文和模型调用成本更低。
 - **便于工程治理和安全控制**：Action metadata、风险等级、确认门控、重试预算、副作用等级和审计日志由可信 registry 与 dispatcher 统一管理，不依赖模型临场遵守自然语言约束。
 
@@ -34,23 +36,16 @@ Action Fabric 将传统 Agent Loop 中隐含于上下文的执行过程显式表
 
 目前已经完成从 YAML Workflow 到 Android 实际工具调用的端到端链路：
 
-```text
-ActionFlow YAML
-      │
-      ▼
-Rust Loader ── DAG 校验与依赖构建
-      │
-      ▼
-Dispatcher ── Ready Set / Policy / Side-effect Control
-      │
-      ▼
-Action Executor ── Local Action / gRPC Remote Action
-      │
-      ▼
-Kotlin Action Runtime ── Android SDK 与系统能力
-      │
-      ▼
-Result / State / Audit / Diagnostics
+```mermaid
+flowchart TD
+    workflow["ActionFlow YAML"]
+    loader["Rust Loader<br/>DAG 校验与依赖构建"]
+    dispatcher["Dispatcher<br/>Ready Set / Policy / Side-effect Control"]
+    executor["Action Executor<br/>Local Action / gRPC Remote Action"]
+    runtime["Kotlin Action Runtime<br/>Android SDK 与系统能力"]
+    result["Result / State / Audit / Diagnostics"]
+
+    workflow --> loader --> dispatcher --> executor --> runtime --> result
 ```
 
 #### Rust 调度内核
@@ -60,10 +55,10 @@ Result / State / Audit / Diagnostics
 - 实现节点状态机、前驱依赖检查、Ready Set 计算和拓扑调度。
 - 支持无依赖节点的批量异步执行，并对非幂等 Action 施加串行约束。
 - 建立 Action Policy，支持风险等级、确认门控、超时与重试策略。
-- 实现有界恢复机制，根据重试预算和副作用等级执行 Retry、Patch 或 Replan 升级。
+- 实现有界恢复机制，根据重试预算和副作用等级执行 Retry，并将 Patch / Replan 作为诊断升级信号交给上层模型循环处理。
 - 实现执行输出解析和节点间结果传递。
 - 实现内存状态存储、审计日志和诊断上下文，能够完整记录节点状态迁移。
-- 提供 Subagent Action 与 Dispatcher Tool Executor，为后续接入模型规划和子任务执行保留统一接口。
+- 提供 Subagent Action 与 Dispatcher Tool Executor，已用于 SubagentAction 和 Chatbot 后端执行模型生成的 Workflow。
 
 #### Rust-Kotlin 跨语言执行链
 
@@ -97,18 +92,21 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 
 - 在移动端界面直接编辑 ActionFlow YAML。
 - 自动解析 DAG 并由 Rust Dispatcher 调度。
-- 通过可配置的 gRPC endpoint 调用同机或局域网内的 Kotlin Action Runtime。
+- 本地支持 `text`、`uppercase`、`subagent`，其余 action 通过可配置的 gRPC endpoint 调用同机或局域网内的 Kotlin Action Runtime。
 - 展示各节点执行状态、输出结果、审计轨迹和诊断信息。
 - 已完成 TypeScript 构建、Rust 单元测试、Android 原生工程生成和 ARM64 Debug APK 构建。
 
 该应用验证了如下完整场景：
 
-```text
-用户输入 Workflow
-→ Rust 构图和调度
-→ gRPC 调用 Kotlin 工具
-→ Android 执行真实系统能力
-→ 结果返回并显示于界面
+```mermaid
+flowchart TD
+    input["用户输入 Workflow"]
+    dispatch["Rust 构图和调度"]
+    grpc["gRPC 调用 Kotlin 工具"]
+    android["Android 执行真实系统能力"]
+    output["结果返回并显示于界面"]
+
+    input --> dispatch --> grpc --> android --> output
 ```
 
 #### Tauri Chatbot Android App
@@ -120,13 +118,19 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 - 当回复以 Workflow 开头时，Rust 后端抽取 ActionFlow YAML，调用 `rust/dispatcher` 完成校验、构图、调度与执行。
 - Workflow 成功时，系统直接渲染 closing fence 后的最终消息模板，不再调用模型进行二次审查或总结。
 - Workflow 失败、用户拒绝或节点异常时，系统将节点状态、已执行结果和诊断信息作为 tool message 反馈给模型，进入有限轮次修正。
-- 高风险 action 通过 Tauri event 触发用户确认；可信 action metadata 不暴露给模型，避免模型自行伪造策略字段。
+- 需要确认或高风险的节点在执行前由 Chatbot App 聚合为批量确认；可信 action metadata 不暴露给模型，避免模型自行伪造策略字段。
 
 该应用展示了“模型生成结构化计划、Action Fabric 可靠执行、成功路径自动推进、异常路径有限回退模型”的完整 Agent Loop 改造方案，是项目面向最终用户的主要演示入口。
 
+实机运行截图如下，展示了 Chatbot App 生成并执行设备、网络和电量状态查询 Workflow 后的结果：
+
+<p align="center">
+  <img src="docs/assets/chatbot-app-device-summary.png" alt="Tauri Chatbot Android App 实机截图：设备、网络和电量状态摘要" width="360" />
+</p>
+
 ### 端侧 LLM：Android 本地推理框架
 
-端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与KV Cache机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
+端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。完整端侧 LLM 工程位于独立仓库，本仓库保留相关实验资料、脚本、接口对接验证和成果说明。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与 KV Cache 机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
 
 系统支持 Qwen3-0.6B, Qwen3-1.7B 等小规模语言模型在移动端完全本地运行，同时提供兼容 OpenAI API 的调用接口，可供上层应用或 Agent 系统直接接入。
 
@@ -157,21 +161,81 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 
 两条技术线通过稳定接口实现解耦：
 
-```text
-┌─────────────────────────────────────────────┐
-│              Android Agent App              │
-├──────────────────────┬──────────────────────┤
-│  Edge LLM Runtime    │    Action Fabric     │
-│                      │                      │
-│  Local Inference     │  Workflow Loader     │
-│  Vulkan Acceleration │  DAG Dispatcher      │
-│  KV / Prefix Cache   │  Policy & Recovery   │
-│  Quantized Models    │  Audit & State       │
-├──────────────────────┴──────────────────────┤
-│ OpenAI-compatible API / Structured Workflow │
-├─────────────────────────────────────────────┤
-│ Kotlin Android Action Runtime and System API│
-└─────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    user["用户目标 / 设备任务"]
+
+    subgraph app["应用层"]
+        direction LR
+        workflow_app["Tauri Workflow App<br/>手动编辑 ActionFlow YAML"]
+        chatbot_app["Tauri Chatbot App<br/>聊天入口 / 失败修正闭环"]
+    end
+
+    subgraph planning["规划层"]
+        direction TB
+        model_api["兼容 OpenAI 的模型服务<br/>/v1/chat/completions"]
+        model_runtime["端侧 LLM Runtime<br/>Local Inference / Vulkan / KV Cache / Quantized Models"]
+        model_api --> model_runtime
+    end
+
+    catalog["可信 Action Catalog / Registry<br/>LLM schema / runtime metadata"]
+    response{"模型回复类型"}
+    text_response["普通文本回复"]
+    workflow_response["fenced YAML workflow response<br/>YAML + closing fence 后的最终消息模板"]
+    workflow["ActionFlow YAML"]
+
+    subgraph plan["计划层"]
+        direction TB
+        metadata["注入可信 metadata<br/>覆盖 policy / sideEffect / retry / timeout"]
+        loader["Rust Loader<br/>YAML 解析 / 引用抽取 / DAG 构建 / 静态校验"]
+    end
+
+    subgraph fabric["Rust Action Fabric"]
+        direction TB
+        engine["Rust Dispatcher / Engine<br/>Ready Set / 状态机 / 策略约束 / 失败恢复"]
+        confirmation["确认门控<br/>WaitingHuman / approve_node / reject_node"]
+        executor["Action Executor<br/>输入引用解析 / execute_batch / 输出保存"]
+        state["节点输出 / 状态 / 审计 / 诊断"]
+
+        engine --> executor
+        engine -- "requires_confirmation" --> confirmation
+        confirmation -- "approve" --> engine
+        confirmation -- "reject" --> state
+        executor --> state
+    end
+
+    subgraph action_layer["执行层"]
+        direction TB
+        local_action["本地 Action<br/>text / uppercase / subagent"]
+        remote_action["RemoteAction<br/>Rust gRPC Client"]
+        kotlin_runtime["Kotlin Android Action Runtime<br/>gRPC Server / ActionExecutor / ActionRegistry"]
+        android_api["Android SDK / 系统服务 / Intent / 权限协调组件"]
+
+        remote_action --> kotlin_runtime --> android_api
+    end
+
+    user --> workflow_app
+    user --> chatbot_app
+    workflow_app --> workflow
+    chatbot_app -- "system + history + user + catalog schema" --> model_api
+    catalog -- "action schema" --> chatbot_app
+    model_runtime --> response
+    response --> text_response --> chatbot_app
+    response --> workflow_response --> workflow
+    catalog -- "trusted metadata" --> metadata
+    workflow --> metadata --> loader --> engine
+    executor --> local_action --> state
+    executor --> remote_action
+    android_api -- "action result" --> kotlin_runtime
+    kotlin_runtime -- "gRPC response" --> remote_action
+    remote_action -- "ExecutionResult" --> executor
+    confirmation -- "逐节点确认" --> workflow_app
+    workflow_app -- "approve / reject" --> confirmation
+    confirmation -- "高风险批量确认" --> chatbot_app
+    chatbot_app -- "approve / reject" --> confirmation
+    state -- "成功：展示节点结果" --> workflow_app
+    state -- "成功：渲染最终消息模板" --> chatbot_app
+    state -- "失败：tool message 反馈给模型修正" --> chatbot_app
 ```
 
 端侧模型可以负责意图理解、任务拆解和 Workflow 生成；Action Fabric 接收结构化计划后执行静态校验、并发调度、策略控制和工具调用。该分工避免让语言模型直接承担底层执行控制，使推理与执行能够独立优化、测试和演进。
@@ -217,7 +281,7 @@ agent_runtime/
 │   └── action_fabric/              # 调研、可行性与 Android 技术文档
 ├── examples/
 │   ├── android-action-runtime/     # Kotlin Runtime 真机冒烟测试应用
-│   ├── dispatcher_demo/            # Rust DAG 调度示例
+│   ├── dispatcher_demo/            # 早期 Rust DAG 调度示例
 │   ├── tauri-workflow-android/     # Workflow 编辑与执行 Android App
 │   └── tauri-chatbot-android/      # 可循环执行 Workflow 的 Chatbot Android App
 ├── kotlin/
@@ -242,6 +306,13 @@ cd rust/dispatcher
 cargo test
 ```
 
+### Rust Actions 编译检查
+
+```bash
+cd rust/actions
+cargo check
+```
+
 ### Action Graph Benchmark
 
 ```bash
@@ -257,16 +328,22 @@ benchmark_results/action_graph_vs_loop/summary.csv
 benchmark_results/action_graph_vs_loop/analysis.md
 ```
 
-### Rust 调度示例
-
-```bash
-cd examples/dispatcher_demo
-cargo run
-```
-
 ### Android Action Runtime
 
 使用 Android Studio 打开 `examples/android-action-runtime`，安装应用并启动 gRPC Service。服务默认监听 `8080` 端口。
+
+也可以直接构建 Debug APK：
+
+```bash
+cd examples/android-action-runtime
+./gradlew :app:assembleDebug
+```
+
+输出路径：
+
+```text
+examples/android-action-runtime/app/build/outputs/apk/debug/app-debug.apk
+```
 
 ### Tauri Workflow App
 
@@ -277,10 +354,30 @@ yarn tauri android init
 yarn tauri android dev
 ```
 
+桌面验证：
+
+```bash
+yarn tauri dev
+```
+
 当 Kotlin Runtime 与 Tauri App 位于同一台 Android 设备时，gRPC endpoint 使用：
 
 ```text
 127.0.0.1:8080
+```
+
+### Tauri Chatbot App
+
+```bash
+cd examples/tauri-chatbot-android
+yarn
+yarn tauri dev
+```
+
+Android：
+
+```bash
+yarn tauri android dev
 ```
 
 ## 当前完成度
@@ -296,10 +393,10 @@ yarn tauri android dev
 | Tauri Workflow Android App | 已完成并产出 ARM64 APK |
 | Tauri Chatbot Android App | 已完成，可循环执行 Workflow 并展示失败修正 |
 | Action Graph vs Agent Loop benchmark | 已完成，包含原始数据、汇总表和分析报告 |
-| Android 端侧 LLM 基础推理链 | 已完成 |
-| Vulkan GPU 推理优化 | 已完成 |
-| KV Cache、Prefix Cache 与 8K 上下文 | 已完成 |
-| Q8_0 量化推理 | 已完成 |
+| Android 端侧 LLM 基础推理链（独立仓库） | 已完成，本仓库保留实验资料与接口对接说明 |
+| Vulkan GPU 推理优化（独立仓库） | 已完成 |
+| KV Cache、Prefix Cache 与 8K 上下文（独立仓库） | 已完成 |
+| Q8_0 量化推理（独立仓库） | 已完成 |
 | Action Fabric 与端侧 LLM 的产品级整合 | 已完成 OpenAI-compatible 接口对接验证，Chatbot App 可接入端侧模型服务生成并执行 Workflow |
 
 ## 会议记录
