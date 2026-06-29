@@ -57,18 +57,32 @@ interface ConfirmationRequest {
   items?: ConfirmationItem[];
 }
 
+interface TraceSession {
+  article: HTMLElement;
+  details: HTMLDetailsElement;
+  title: HTMLElement;
+  status: HTMLElement;
+  count: HTMLElement;
+  list: HTMLOListElement;
+  answer: HTMLParagraphElement;
+  activeItem: HTMLLIElement | null;
+  itemCount: number;
+  hasFailure: boolean;
+}
+
 const messages = element<HTMLDivElement>("#messages");
 const composer = element<HTMLFormElement>("#composer");
 const messageInput = element<HTMLTextAreaElement>("#message-input");
 const sendButton = element<HTMLButtonElement>("#send-button");
 const connectionLabel = element<HTMLElement>("#connection-label");
-const activityList = element<HTMLOListElement>("#activity-list");
-const activityEmpty = element<HTMLElement>("#activity-empty");
 const settingsOverlay = element<HTMLElement>("#settings-overlay");
 const confirmationOverlay = element<HTMLElement>("#confirmation-overlay");
+const confirmationRiskIcon = element<HTMLElement>("#confirmation-risk-icon");
 const confirmationTitle = element<HTMLElement>("#confirmation-title");
-const confirmationAction = element<HTMLElement>("#confirmation-action");
 const confirmationMeta = element<HTMLElement>("#confirmation-meta");
+const confirmationSummary = element<HTMLElement>("#confirmation-summary");
+const confirmationActionList = element<HTMLElement>("#confirmation-action-list");
+const confirmationDetails = element<HTMLDetailsElement>("#confirmation-details");
 const confirmationInputs = element<HTMLElement>("#confirmation-inputs");
 const approveButton = element<HTMLButtonElement>("#approve-button");
 const rejectButton = element<HTMLButtonElement>("#reject-button");
@@ -76,7 +90,7 @@ const rejectButton = element<HTMLButtonElement>("#reject-button");
 const history: ChatMessage[] = [];
 let running = false;
 let pendingConfirmation: ConfirmationRequest | null = null;
-let activeActivity: HTMLLIElement | null = null;
+let activeTrace: TraceSession | null = null;
 
 const tauriAvailable = "__TAURI_INTERNALS__" in window;
 
@@ -135,6 +149,7 @@ approveButton.addEventListener("click", () => void resolveConfirmation(true));
 rejectButton.addEventListener("click", () => void resolveConfirmation(false));
 
 restoreSettings();
+showPreviewIfRequested();
 
 async function sendMessage() {
   const content = messageInput.value.trim();
@@ -143,10 +158,11 @@ async function sendMessage() {
   }
 
   appendMessage("user", content);
+  const trace = createAssistantTurn();
+  activeTrace = trace;
   messageInput.value = "";
   messageInput.style.height = "auto";
   setRunning(true);
-  resetActivity();
 
   try {
     const response = await invoke<ChatLoopResponse>("run_chat_loop", {
@@ -158,72 +174,90 @@ async function sendMessage() {
     });
     history.push({ role: "user", content });
     history.push({ role: "assistant", content: response.message });
-    appendMessage("assistant", response.message, response.turns, response.workflows.length);
+    completeAssistantTurn(trace, response.message);
     setConnection("已完成", "success");
   } catch (error) {
-    appendError(String(error));
+    failAssistantTurn(trace, String(error));
     setConnection("运行失败", "failure");
-    finishActiveActivity("failure");
   } finally {
+    activeTrace = null;
     setRunning(false);
   }
 }
 
 function renderAgentStatus(event: AgentStatusEvent) {
-  activityEmpty.classList.add("hidden");
+  const trace = ensureActiveTrace();
 
   if (event.kind === "thinking") {
-    finishActiveActivity();
-    activeActivity = createActivity(
+    finishActiveActivity(trace);
+    trace.activeItem = createActivity(
+      trace,
       "thinking",
-      `第 ${event.turn} 轮 · 模型`,
+      "思考",
       "正在生成下一步…",
       true,
     );
-    setConnection("模型思考中", "running");
+    setTraceStatus(trace, "正在思考", "running");
+    setConnection("思考中", "running");
     return;
   }
 
   if (event.kind === "workflow") {
-    finishActiveActivity("success");
-    activeActivity = createActivity(
+    finishActiveActivity(trace, "success");
+    trace.activeItem = createActivity(
+      trace,
       "workflow",
-      `第 ${event.turn} 轮 · Workflow`,
+      "生成执行计划",
       "已生成执行计划",
       false,
       event.yaml ?? undefined,
     );
+    setTraceStatus(trace, "已生成执行计划", "running");
     return;
   }
 
   if (event.kind === "executing") {
-    finishActiveActivity("success");
-    activeActivity = createActivity(
+    finishActiveActivity(trace, "success");
+    trace.activeItem = createActivity(
+      trace,
       "executing",
-      `第 ${event.turn} 轮 · Dispatcher`,
-      "正在调度节点…",
+      "执行任务",
+      "正在执行步骤…",
       true,
     );
-    setConnection("执行 workflow", "running");
+    setTraceStatus(trace, "正在执行任务", "running");
+    setConnection("正在执行任务", "running");
     return;
   }
 
   if (event.kind === "workflowSuccess" || event.kind === "workflowFailure") {
-    finishActiveActivity(event.kind === "workflowSuccess" ? "success" : "failure");
-    activeActivity = createWorkflowActivity(event);
+    const result = event.kind === "workflowSuccess" ? "success" : "failure";
+    finishActiveActivity(trace, result);
+    trace.activeItem = createWorkflowActivity(trace, event);
+    if (result === "failure") {
+      trace.hasFailure = true;
+      trace.details.open = true;
+    }
+    setTraceStatus(
+      trace,
+      result === "success" ? "执行完成" : "执行遇到问题",
+      result,
+    );
     setConnection(
-      event.kind === "workflowSuccess" ? "最终消息已返回" : "失败信息回传模型",
+      event.kind === "workflowSuccess" ? "最终回复已生成" : "正在修正任务",
       event.kind === "workflowSuccess" ? "success" : "waiting",
     );
     return;
   }
 
   if (event.kind === "complete") {
-    finishActiveActivity("success");
+    finishActiveActivity(trace, "success");
+    setTraceStatus(trace, "准备最终回复", "success");
   }
 }
 
 function createActivity(
+  trace: TraceSession,
   type: string,
   title: string,
   description: string,
@@ -244,21 +278,24 @@ function createActivity(
   item.querySelector("p")!.textContent = description;
   if (detail) {
     const details = document.createElement("details");
-    details.innerHTML = "<summary>查看 YAML</summary><pre></pre>";
+    details.innerHTML = "<summary>查看原始计划</summary><pre></pre>";
     details.querySelector("pre")!.textContent = detail;
     item.querySelector(".activity-content")!.append(details);
   }
-  activityList.append(item);
-  scrollActivity();
+  trace.list.append(item);
+  trace.itemCount += 1;
+  updateTraceCount(trace);
+  scrollMessages();
   return item;
 }
 
-function createWorkflowActivity(event: AgentStatusEvent) {
+function createWorkflowActivity(trace: TraceSession, event: AgentStatusEvent) {
   const report = event.workflow!;
   const item = createActivity(
+    trace,
     event.kind,
-    `${report.planId} · ${Object.keys(report.nodeStates).length} 个节点`,
-    event.message,
+    `${report.planId} · ${Object.keys(report.nodeStates).length} 个步骤`,
+    report.success ? "已完成" : cleanRuntimeMessage(event.message),
     false,
   );
   const badge = item.querySelector(".activity-title span")!;
@@ -283,7 +320,9 @@ function createWorkflowActivity(event: AgentStatusEvent) {
 
   if (report.error || report.diagnostics.length > 0) {
     const details = document.createElement("details");
-    details.innerHTML = "<summary>失败详情</summary><pre></pre>";
+    details.innerHTML = report.success
+      ? "<summary>诊断信息</summary><pre></pre>"
+      : "<summary>原始错误信息</summary><pre></pre>";
     details.querySelector("pre")!.textContent = [
       report.error,
       ...report.diagnostics.map((entry) => `${entry.nodeId}: ${entry.message}`),
@@ -292,75 +331,434 @@ function createWorkflowActivity(event: AgentStatusEvent) {
       .join("\n");
     item.querySelector(".activity-content")!.append(details);
   }
-  scrollActivity();
+  scrollMessages();
   return item;
 }
 
-function finishActiveActivity(result: "success" | "failure" = "success") {
-  if (!activeActivity) {
+function cleanRuntimeMessage(message: string) {
+  return message
+    .replace(/workflow/gi, "任务")
+    .replace(/dispatcher/gi, "执行器")
+    .replace(/node/gi, "步骤")
+    .replace(/节点/g, "步骤");
+}
+
+function finishActiveActivity(
+  trace = activeTrace,
+  result: "success" | "failure" = "success",
+) {
+  if (!trace?.activeItem) {
     return;
   }
-  activeActivity.querySelector(".activity-node")?.classList.remove("pulse");
-  const state = activeActivity.querySelector(".activity-title span");
+  trace.activeItem.querySelector(".activity-node")?.classList.remove("pulse");
+  const state = trace.activeItem.querySelector(".activity-title span");
   if (state?.textContent === "运行中") {
     state.textContent = result === "success" ? "完成" : "失败";
     state.className = result === "success" ? "success-text" : "failure-text";
   }
-  activeActivity = null;
+  trace.activeItem = null;
 }
 
 function appendMessage(
   role: "user" | "assistant",
   content: string,
-  turns?: number,
-  workflows?: number,
 ) {
+  if (role === "assistant") {
+    const trace = createAssistantTurn(false);
+    completeAssistantTurn(trace, content);
+    return;
+  }
+
   const article = document.createElement("article");
   article.className = `message ${role}-message`;
   const avatar = document.createElement("div");
-  avatar.className = "avatar";
-  avatar.textContent = role === "assistant" ? "A" : "你";
+  setAvatarIcon(avatar, "user");
   const body = document.createElement("div");
   body.className = "message-body";
   const paragraph = document.createElement("p");
   paragraph.textContent = content;
   body.append(paragraph);
-  if (role === "assistant" && turns != null) {
-    const meta = document.createElement("small");
-    meta.className = "message-meta";
-    meta.textContent =
-      workflows && workflows > 0
-        ? `${turns} 轮模型调用 · ${workflows} 个 workflow`
-        : `${turns} 轮模型调用`;
-    body.append(meta);
-  }
   article.append(avatar, body);
   messages.append(article);
-  messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
+  scrollMessages();
 }
 
-function appendError(content: string) {
+function createAssistantTurn(showThinking = true): TraceSession {
   const article = document.createElement("article");
-  article.className = "message system-message";
-  article.textContent = `运行中断：${content}`;
+  article.className = "message assistant-message";
+
+  const avatar = document.createElement("div");
+  setAvatarIcon(avatar, "bot");
+
+  const body = document.createElement("div");
+  body.className = "message-body";
+
+  const details = document.createElement("details");
+  details.className = "thinking-panel";
+  details.open = true;
+  details.innerHTML = `
+    <summary>
+      <span class="thinking-dot pulse"></span>
+      <span class="thinking-copy">
+        <strong>思考中</strong>
+        <small>正在规划下一步</small>
+      </span>
+      <span class="thinking-count">0 步</span>
+    </summary>
+    <ol class="activity-list thinking-list"></ol>
+  `;
+
+  const answer = document.createElement("p");
+  answer.className = "message-text hidden";
+
+  if (showThinking) {
+    body.append(details);
+  } else {
+    details.classList.add("hidden");
+  }
+  body.append(answer);
+  article.append(avatar, body);
   messages.append(article);
+  scrollMessages();
+
+  return {
+    article,
+    details,
+    title: details.querySelector(".thinking-copy strong")!,
+    status: details.querySelector(".thinking-copy small")!,
+    count: details.querySelector(".thinking-count")!,
+    list: details.querySelector(".thinking-list")!,
+    answer,
+    activeItem: null,
+    itemCount: 0,
+    hasFailure: false,
+  };
+}
+
+function ensureActiveTrace() {
+  if (!activeTrace) {
+    activeTrace = createAssistantTurn();
+  }
+  return activeTrace;
+}
+
+function setAvatarIcon(avatar: HTMLElement, kind: "bot" | "user") {
+  avatar.className = `avatar avatar-${kind}`;
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.innerHTML =
+    kind === "bot"
+      ? `<svg viewBox="0 0 24 24">
+          <path d="M12 7V4"></path>
+          <rect x="5" y="7" width="14" height="12" rx="4"></rect>
+          <path d="M9 12h.01"></path>
+          <path d="M15 12h.01"></path>
+          <path d="M9 16h6"></path>
+        </svg>`
+      : `<svg viewBox="0 0 24 24">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M5 20a7 7 0 0 1 14 0"></path>
+        </svg>`;
+}
+
+function completeAssistantTurn(trace: TraceSession, content: string) {
+  finishActiveActivity(trace, trace.hasFailure ? "failure" : "success");
+  trace.answer.textContent = content;
+  trace.answer.classList.remove("hidden");
+  trace.article.classList.remove("pending-message");
+
+  if (trace.itemCount === 0) {
+    trace.details.classList.add("hidden");
+  } else {
+    setTraceStatus(
+      trace,
+      trace.hasFailure ? "运行遇到问题" : "已完成",
+      trace.hasFailure ? "failure" : "success",
+    );
+    trace.details.open = trace.hasFailure;
+  }
+  scrollMessages();
+}
+
+function failAssistantTurn(trace: TraceSession, error: string) {
+  trace.hasFailure = true;
+  finishActiveActivity(trace, "failure");
+  setTraceStatus(trace, "运行失败", "failure");
+  trace.details.open = true;
+  trace.answer.textContent = `运行中断：${error}`;
+  trace.answer.classList.remove("hidden");
+  trace.answer.classList.add("error-text");
+  scrollMessages();
+}
+
+function setTraceStatus(
+  trace: TraceSession,
+  label: string,
+  state: "running" | "success" | "failure",
+) {
+  trace.title.textContent = state === "running" ? "思考中" : "运行过程";
+  trace.status.textContent = label;
+  trace.details.classList.toggle("running", state === "running");
+  trace.details.classList.toggle("success", state === "success");
+  trace.details.classList.toggle("failure", state === "failure");
+  trace.details
+    .querySelector(".thinking-dot")
+    ?.classList.toggle("pulse", state === "running");
+}
+
+function updateTraceCount(trace: TraceSession) {
+  trace.count.textContent = `${trace.itemCount} 步`;
+}
+
+function scrollMessages() {
   messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
 }
 
 function renderConfirmationRequest(payload: ConfirmationRequest) {
   const items = confirmationItems(payload);
   const batch = isBatchConfirmation(payload);
-  confirmationTitle.textContent = batch ? "允许执行此 workflow？" : "允许执行此操作？";
-  confirmationAction.textContent = batch
-    ? `${payload.workflowId ?? payload.nodeId} · ${items.length} 个操作`
-    : items[0]?.action ?? payload.action;
-  confirmationMeta.textContent = batch
-    ? `统一授权 · 最高${riskLabel(payload.risk)}`
-    : `节点 ${payload.nodeId} · ${riskLabel(payload.risk)}`;
-  confirmationInputs.textContent = batch
-    ? formatConfirmationItems(items)
-    : formatInputs(items[0]?.inputs ?? payload.inputs);
-  approveButton.textContent = batch ? "允许全部执行" : "允许执行";
+  const summary = buildConfirmationSummary(payload, items);
+
+  confirmationRiskIcon.className = `risk-icon ${payload.risk}`;
+  confirmationRiskIcon.textContent = riskIcon(payload.risk);
+  confirmationTitle.textContent = summary.title;
+  confirmationMeta.textContent = summary.meta;
+  confirmationSummary.replaceChildren();
+  confirmationSummary.append(createSummaryText(summary.headline, summary.description));
+  confirmationActionList.replaceChildren(
+    ...items.map((item, index) => createConfirmationItem(item, index, batch)),
+  );
+  confirmationDetails.open = payload.risk === "critical";
+  confirmationInputs.textContent = formatTechnicalConfirmation(payload, items);
+  rejectButton.textContent = "不允许";
+  approveButton.textContent = batch ? `允许 ${items.length} 个操作` : "允许执行";
+}
+
+function showPreviewIfRequested() {
+  const preview = new URLSearchParams(window.location.search).get("preview");
+  if (tauriAvailable) {
+    return;
+  }
+
+  if (preview === "thinking") {
+    appendMessage("user", "查看当前设备、网络和电量状态，并给我一份简洁摘要。");
+    const trace = createAssistantTurn();
+    activeTrace = trace;
+    renderAgentStatus({
+      kind: "thinking",
+      turn: 1,
+      message: "正在理解请求",
+      yaml: null,
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "workflow",
+      turn: 1,
+      message: "已生成设备状态检查任务",
+      yaml:
+        "id: inspect-device\nnodes:\n  battery:\n    action: get_battery_status\n  network:\n    action: get_network_status\n  storage:\n    action: get_storage_status",
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "executing",
+      turn: 1,
+      message: "正在执行步骤",
+      yaml: null,
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "workflowSuccess",
+      turn: 1,
+      message: "设备状态已读取完成",
+      yaml: null,
+      workflow: {
+        planId: "inspect-device",
+        success: true,
+        outputNode: "summary",
+        finalOutput: "设备状态正常",
+        nodeStates: {
+          battery: "executed",
+          network: "executed",
+          storage: "executed",
+        },
+        executedOutputs: {
+          battery: "电量 78%，未充电",
+          network: "Wi-Fi 已连接，信号良好",
+          storage: "剩余空间充足",
+        },
+        diagnostics: [],
+        error: null,
+      },
+    });
+    completeAssistantTurn(
+      trace,
+      "设备状态看起来正常：电量 78%，Wi-Fi 连接稳定，存储空间充足。当前没有需要立即处理的问题。",
+    );
+    trace.details.open = true;
+    activeTrace = null;
+    setConnection("预览运行过程", "success");
+    return;
+  }
+
+  if (preview === "recovered") {
+    appendMessage("user", "读取剪贴板内容并告诉我重点。");
+    const trace = createAssistantTurn();
+    activeTrace = trace;
+    renderAgentStatus({
+      kind: "thinking",
+      turn: 1,
+      message: "正在理解请求",
+      yaml: null,
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "workflow",
+      turn: 1,
+      message: "已生成剪贴板总结任务",
+      yaml:
+        "version: 1\nid: read-clipboard-summary\nsteps:\n  - id: clip_data\n    action: clipboard_read\n    inputs:\n      unused: true\n  - id: final_report\n    action: subagent\n    inputs:\n      prompt: \"读取以下剪贴板内容，用中文总结核心重点。内容：${clip_data}\"",
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "executing",
+      turn: 1,
+      message: "正在执行步骤",
+      yaml: null,
+      workflow: null,
+    });
+    renderAgentStatus({
+      kind: "workflowSuccess",
+      turn: 1,
+      message: "任务执行成功，最终回复已生成",
+      yaml: null,
+      workflow: {
+        planId: "read-clipboard-summary",
+        success: true,
+        outputNode: "final_report",
+        finalOutput: "核心重点总结如下：",
+        nodeStates: {
+          clip_data: "executed",
+          final_report: "executed",
+        },
+        executedOutputs: {
+          clip_data: "一段需要总结的剪贴板内容",
+          final_report: "核心重点总结如下：\n\n1. 这是一段剪贴板内容。\n2. 已生成摘要。",
+        },
+        diagnostics: [
+          {
+            nodeId: "final_report",
+            message: "action timed out after 120000 ms",
+          },
+        ],
+        error: null,
+      },
+    });
+    completeAssistantTurn(
+      trace,
+      "核心重点总结如下：\n\n1. 这是一段剪贴板内容。\n2. 已生成摘要。",
+    );
+    trace.details.open = true;
+    activeTrace = null;
+    setConnection("预览已完成", "success");
+    return;
+  }
+
+  if (preview !== "confirmation") {
+    return;
+  }
+
+  const payload: ConfirmationRequest = {
+    requestId: "preview-confirmation",
+    nodeId: "alarm_730",
+    action: "set_alarm",
+    inputs: { hour: 7, minutes: 30, message: "Alarm 1", skipUi: true },
+    risk: "medium",
+    workflowId: "set-alarms-730-to-800",
+    items: [
+      {
+        nodeId: "alarm_730",
+        action: "set_alarm",
+        inputs: { hour: 7, minutes: 30, message: "Alarm 1", skipUi: true },
+        risk: "medium",
+      },
+      {
+        nodeId: "alarm_740",
+        action: "set_alarm",
+        inputs: { hour: 7, minutes: 40, message: "Alarm 2", skipUi: true },
+        risk: "medium",
+      },
+      {
+        nodeId: "alarm_750",
+        action: "set_alarm",
+        inputs: { hour: 7, minutes: 50, message: "Alarm 3", skipUi: true },
+        risk: "medium",
+      },
+      {
+        nodeId: "alarm_800",
+        action: "set_alarm",
+        inputs: { hour: 8, minutes: 0, message: "Alarm 4", skipUi: true },
+        risk: "medium",
+      },
+    ],
+  };
+
+  renderConfirmationRequest(payload);
+  showOverlay(confirmationOverlay);
+  setConnection("预览确认弹窗", "waiting");
+}
+
+function buildConfirmationSummary(payload: ConfirmationRequest, items: ConfirmationItem[]) {
+  const action = dominantAction(items);
+  const count = items.length;
+  const subject = confirmationSubject(action, count);
+  return {
+    title: `允许${subject}？`,
+    meta: `${count} 个操作 · ${riskLabel(payload.risk)}`,
+    headline: action === "multiple" ? "应用将执行一组设备操作" : friendlyActionName(action),
+    description: actionImpact(action, count, payload.risk),
+  };
+}
+
+function createSummaryText(headline: string, description: string) {
+  const fragment = document.createDocumentFragment();
+  const title = document.createElement("strong");
+  const copy = document.createElement("p");
+  title.textContent = headline;
+  copy.textContent = description;
+  fragment.append(title, copy);
+  return fragment;
+}
+
+function createConfirmationItem(item: ConfirmationItem, index: number, batch: boolean) {
+  const row = document.createElement("article");
+  row.className = `confirmation-item ${item.risk}`;
+
+  const count = document.createElement("span");
+  count.className = "confirmation-item-index";
+  count.textContent = String(index + 1);
+
+  const content = document.createElement("div");
+  content.className = "confirmation-item-content";
+
+  const title = document.createElement("strong");
+  title.textContent = confirmationItemTitle(item, index, batch);
+
+  const meta = document.createElement("small");
+  meta.textContent = `${friendlyActionName(item.action)} · ${riskLabel(item.risk)}`;
+
+  const chips = document.createElement("div");
+  chips.className = "confirmation-item-chips";
+  for (const label of confirmationItemHighlights(item)) {
+    const chip = document.createElement("span");
+    chip.textContent = label;
+    chips.append(chip);
+  }
+
+  content.append(title, meta);
+  if (chips.childElementCount > 0) {
+    content.append(chips);
+  }
+  row.append(count, content);
+  return row;
 }
 
 function isBatchConfirmation(payload: ConfirmationRequest) {
@@ -381,22 +779,155 @@ function confirmationItems(payload: ConfirmationRequest): ConfirmationItem[] {
   ];
 }
 
-function formatConfirmationItems(items: ConfirmationItem[]) {
-  if (items.length === 0) {
-    return "(无待确认操作)";
+function dominantAction(items: ConfirmationItem[]) {
+  const [first] = items;
+  if (!first) {
+    return "multiple";
   }
-  return items
-    .map(
-      (item, index) =>
-        `${index + 1}. ${item.nodeId} · ${item.action} · ${riskLabel(item.risk)}\n${formatInputs(
-          item.inputs,
-        )}`,
-    )
-    .join("\n\n");
+  return items.every((item) => item.action === first.action) ? first.action : "multiple";
 }
 
-function formatInputs(inputs: unknown) {
-  return inputs == null ? "(无输入)" : JSON.stringify(inputs, null, 2);
+function confirmationSubject(action: string, count: number) {
+  if (action === "set_alarm") {
+    return count > 1 ? `设置 ${count} 个闹钟` : "设置闹钟";
+  }
+  if (action === "multiple") {
+    return `执行 ${count} 个设备操作`;
+  }
+  return friendlyActionName(action);
+}
+
+function friendlyActionName(action: string) {
+  return (
+    {
+      set_alarm: "设置闹钟",
+      get_device_status: "读取设备状态",
+      get_current_media: "查看正在播放的媒体",
+      read_clipboard: "读取剪贴板",
+      get_clipboard: "读取剪贴板",
+      write_clipboard: "写入剪贴板",
+      clipboard_read: "读取剪贴板",
+      open_url: "打开链接",
+      send_notification: "发送通知",
+      subagent: "生成总结",
+    }[action] ?? action.replace(/[_-]+/g, " ")
+  );
+}
+
+function actionImpact(action: string, count: number, risk: ConfirmationRisk) {
+  if (action === "set_alarm") {
+    return `将在设备上创建${count > 1 ? ` ${count} 个` : ""}闹钟。请确认时间和名称无误。`;
+  }
+  if (action.includes("clipboard")) {
+    return "将访问剪贴板内容来完成当前请求，请确认其中没有不想共享的信息。";
+  }
+  if (action.startsWith("get") || action.startsWith("read")) {
+    return "将读取设备上的相关信息，仅用于完成这次对话请求。";
+  }
+  if (risk === "high" || risk === "critical") {
+    return "该操作可能明显改变设备状态，请确认这些变更符合你的意图。";
+  }
+  return "将代表你在设备上执行操作，请确认后继续。";
+}
+
+function confirmationItemTitle(item: ConfirmationItem, index: number, batch: boolean) {
+  if (item.action === "set_alarm") {
+    const input = asInputRecord(item.inputs);
+    const time = formatAlarmTime(input);
+    const message = stringValue(input?.message);
+    if (time && message) {
+      return `${time} · ${message}`;
+    }
+    if (time) {
+      return `${time} 的闹钟`;
+    }
+  }
+  const action = friendlyActionName(item.action);
+  return batch ? `${action} ${index + 1}` : action;
+}
+
+function confirmationItemHighlights(item: ConfirmationItem) {
+  const input = asInputRecord(item.inputs);
+  if (!input) {
+    return [];
+  }
+
+  if (item.action === "set_alarm") {
+    return [
+      formatAlarmTime(input) ? `时间 ${formatAlarmTime(input)}` : null,
+      stringValue(input.message) ? `名称 ${stringValue(input.message)}` : null,
+    ].filter(Boolean) as string[];
+  }
+
+  return Object.entries(input)
+    .slice(0, 3)
+    .map(([key, value]) => `${friendlyInputKey(key)} ${formatInlineValue(value)}`);
+}
+
+function formatAlarmTime(input: Record<string, unknown> | null) {
+  const hour = numberValue(input?.hour);
+  const minutes = numberValue(input?.minutes);
+  if (hour == null || minutes == null) {
+    return null;
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function friendlyInputKey(key: string) {
+  return (
+    {
+      hour: "小时",
+      minutes: "分钟",
+      message: "名称",
+      url: "链接",
+      text: "文本",
+      content: "内容",
+    }[key] ?? key.replace(/[_-]+/g, " ")
+  );
+}
+
+function formatInlineValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function asInputRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatTechnicalConfirmation(payload: ConfirmationRequest, items: ConfirmationItem[]) {
+  return JSON.stringify(
+    {
+      requestId: payload.requestId,
+      nodeId: payload.nodeId,
+      action: payload.action,
+      inputs: payload.inputs,
+      risk: payload.risk,
+      workflowId: payload.workflowId ?? null,
+      items,
+    },
+    null,
+    2,
+  );
+}
+
+function riskIcon(risk: ConfirmationRisk) {
+  return risk === "low" ? "i" : "!";
 }
 
 async function resolveConfirmation(approved: boolean) {
@@ -425,19 +956,13 @@ function setRunning(value: boolean) {
   messageInput.disabled = value;
   sendButton.querySelector("span")!.textContent = value ? "运行中" : "发送";
   if (value) {
-    setConnection("启动 agent loop", "running");
+    setConnection("正在启动任务", "running");
   }
 }
 
 function setConnection(label: string, state: string) {
   connectionLabel.textContent = label;
   connectionLabel.parentElement!.className = `connection-pill ${state}`;
-}
-
-function resetActivity() {
-  activityList.replaceChildren();
-  activityEmpty.classList.remove("hidden");
-  activeActivity = null;
 }
 
 function readSettings() {
@@ -495,13 +1020,6 @@ function hideOverlay(overlay: HTMLElement) {
 function setDecisionDisabled(value: boolean) {
   approveButton.disabled = value;
   rejectButton.disabled = value;
-}
-
-function scrollActivity() {
-  activityList.parentElement?.scrollTo({
-    top: activityList.parentElement.scrollHeight,
-    behavior: "smooth",
-  });
 }
 
 function riskLabel(risk: ConfirmationRequest["risk"]) {

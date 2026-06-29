@@ -5,32 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111b18" />
     <link rel="stylesheet" href="/src/styles.css" />
-    <title>Action Chat</title>
+    <title>聊天</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-          <div>
-            <p class="eyebrow">ACTION FABRIC</p>
-            <h1>Action Chat</h1>
-          </div>
-        </div>
         <div class="connection-pill">
           <span class="connection-dot"></span>
           <span id="connection-label">就绪</span>
         </div>
+        <button id="settings-button" class="icon-button" type="button" aria-label="模型设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"></path>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path>
+          </svg>
+        </button>
       </header>
 
       <section class="workspace">
         <section class="chat-panel">
           <div id="messages" class="messages" aria-live="polite">
             <article class="message assistant-message welcome-message">
-              <div class="avatar">A</div>
+              <div class="avatar avatar-bot" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 7V4"></path>
+                  <rect x="5" y="7" width="14" height="12" rx="4"></rect>
+                  <path d="M9 12h.01"></path>
+                  <path d="M15 12h.01"></path>
+                  <path d="M9 16h6"></path>
+                </svg>
+              </div>
               <div class="message-body">
-                <p>你好，我可以回答问题，也可以规划并执行设备 workflow。</p>
+                <p>你好，我可以回答问题，也可以规划并执行设备任务。</p>
                 <div class="suggestions">
                   <button class="suggestion" data-prompt="查看当前设备、网络和电量状态，并给我一份简洁摘要。">
                     设备状态摘要
@@ -46,43 +53,23 @@
             </article>
           </div>
 
-          <form id="composer" class="composer">
-            <textarea
-              id="message-input"
-              rows="1"
-              placeholder="输入问题或设备任务…"
-              aria-label="聊天消息"
-            ></textarea>
-            <button id="send-button" class="send-button" type="submit" aria-label="发送">
-              <span>发送</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m5 12 14-7-4.8 14-2.7-5.2L5 12Z"></path>
-              </svg>
-            </button>
-          </form>
-          <p class="composer-note">高风险操作执行前会请求你的确认</p>
+          <div class="composer-wrap">
+            <form id="composer" class="composer">
+              <textarea
+                id="message-input"
+                rows="1"
+                placeholder="输入问题或设备任务…"
+                aria-label="聊天消息"
+              ></textarea>
+              <button id="send-button" class="send-button" type="submit" aria-label="发送">
+                <span>发送</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m5 12 14-7-4.8 14-2.7-5.2L5 12Z"></path>
+                </svg>
+              </button>
+            </form>
+          </div>
         </section>
-
-        <aside class="activity-panel">
-          <div class="activity-header">
-            <div>
-              <p class="eyebrow">LIVE TRACE</p>
-              <h2>运行过程</h2>
-            </div>
-            <button id="settings-button" class="icon-button" type="button" aria-label="模型设置">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"></path>
-                <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path>
-              </svg>
-            </button>
-          </div>
-          <div id="activity-empty" class="activity-empty">
-            <div class="empty-orbit"><span></span></div>
-            <strong>等待任务</strong>
-            <p>模型调用和 workflow 节点状态会显示在这里。</p>
-          </div>
-          <ol id="activity-list" class="activity-list"></ol>
-        </aside>
       </section>
     </main>
 
@@ -100,7 +87,7 @@
         <label for="model-name">模型</label>
         <input id="model-name" value="local-model" spellcheck="false" />
         <label for="api-key">API Key（可选）</label>
-        <input id="api-key" type="password" autocomplete="off" placeholder="不会写入 workflow" />
+        <input id="api-key" type="password" autocomplete="off" placeholder="不会写入任务内容" />
         <label for="grpc-endpoint">Android Action Runtime</label>
         <input id="grpc-endpoint" value="127.0.0.1:8080" spellcheck="false" />
         <div class="settings-grid">
@@ -119,17 +106,18 @@
 
     <div id="confirmation-overlay" class="overlay hidden" aria-hidden="true">
       <section class="dialog confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-title">
-        <div class="risk-icon">!</div>
-        <p class="eyebrow">ACTION CONFIRMATION</p>
+        <div id="confirmation-risk-icon" class="risk-icon">!</div>
+        <p class="eyebrow">需要你的确认</p>
         <h2 id="confirmation-title">允许执行此操作？</h2>
-        <strong id="confirmation-action" class="confirmation-action"></strong>
         <p id="confirmation-meta" class="confirmation-meta"></p>
-        <details open>
-          <summary>查看操作与输入参数</summary>
+        <div id="confirmation-summary" class="confirmation-summary"></div>
+        <div id="confirmation-action-list" class="confirmation-action-list"></div>
+        <details id="confirmation-details" class="technical-details">
+          <summary>查看技术详情</summary>
           <pre id="confirmation-inputs"></pre>
         </details>
         <div class="confirmation-actions">
-          <button id="reject-button" class="secondary-button" type="button">拒绝</button>
+          <button id="reject-button" class="secondary-button" type="button">不允许</button>
           <button id="approve-button" class="primary-button" type="button">允许执行</button>
         </div>
       </section>
