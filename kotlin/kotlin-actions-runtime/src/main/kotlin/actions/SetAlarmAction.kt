@@ -4,8 +4,11 @@ import android.content.Intent
 import android.provider.AlarmClock
 import api.Action
 import api.ActionContext
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import util.IntentLauncher
+
+private const val SET_ALARM_SETTLE_MS = 1_200L
 
 @Serializable
 data class SetAlarmInput(
@@ -23,6 +26,11 @@ class SetAlarmAction : Action<SetAlarmInput, LaunchResult> {
             putExtra(AlarmClock.EXTRA_MINUTES, input.minutes)
             putExtra(AlarmClock.EXTRA_SKIP_UI, input.skipUi)
         }
-        return IntentLauncher.launch(ctx.appContext, intent)
+        val result = IntentLauncher.launch(ctx.appContext, intent)
+        if (input.skipUi) {
+            // Clock apps consume ACTION_SET_ALARM asynchronously; avoid dropping rapid batches.
+            delay(SET_ALARM_SETTLE_MS)
+        }
+        return result
     }
 }

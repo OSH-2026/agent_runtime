@@ -38,12 +38,23 @@ interface ChatLoopResponse {
   workflows: WorkflowReport[];
 }
 
+type ConfirmationRisk = "low" | "medium" | "high" | "critical";
+
+interface ConfirmationItem {
+  nodeId: string;
+  action: string;
+  inputs: unknown;
+  risk: ConfirmationRisk;
+}
+
 interface ConfirmationRequest {
   requestId: string;
   nodeId: string;
   action: string;
   inputs: unknown;
-  risk: "low" | "medium" | "high" | "critical";
+  risk: ConfirmationRisk;
+  workflowId?: string | null;
+  items?: ConfirmationItem[];
 }
 
 const messages = element<HTMLDivElement>("#messages");
@@ -55,6 +66,7 @@ const activityList = element<HTMLOListElement>("#activity-list");
 const activityEmpty = element<HTMLElement>("#activity-empty");
 const settingsOverlay = element<HTMLElement>("#settings-overlay");
 const confirmationOverlay = element<HTMLElement>("#confirmation-overlay");
+const confirmationTitle = element<HTMLElement>("#confirmation-title");
 const confirmationAction = element<HTMLElement>("#confirmation-action");
 const confirmationMeta = element<HTMLElement>("#confirmation-meta");
 const confirmationInputs = element<HTMLElement>("#confirmation-inputs");
@@ -75,13 +87,10 @@ if (tauriAvailable) {
 
   void listen<ConfirmationRequest>("confirmation-request", ({ payload }) => {
     pendingConfirmation = payload;
-    confirmationAction.textContent = payload.action;
-    confirmationMeta.textContent = `节点 ${payload.nodeId} · ${riskLabel(payload.risk)}`;
-    confirmationInputs.textContent =
-      payload.inputs == null ? "(无输入)" : JSON.stringify(payload.inputs, null, 2);
+    renderConfirmationRequest(payload);
     showOverlay(confirmationOverlay);
     setDecisionDisabled(false);
-    setConnection("等待确认", "waiting");
+    setConnection(isBatchConfirmation(payload) ? "等待统一确认" : "等待确认", "waiting");
   });
 } else {
   setConnection("浏览器预览", "waiting");
@@ -336,6 +345,58 @@ function appendError(content: string) {
   article.textContent = `运行中断：${content}`;
   messages.append(article);
   messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
+}
+
+function renderConfirmationRequest(payload: ConfirmationRequest) {
+  const items = confirmationItems(payload);
+  const batch = isBatchConfirmation(payload);
+  confirmationTitle.textContent = batch ? "允许执行此 workflow？" : "允许执行此操作？";
+  confirmationAction.textContent = batch
+    ? `${payload.workflowId ?? payload.nodeId} · ${items.length} 个操作`
+    : items[0]?.action ?? payload.action;
+  confirmationMeta.textContent = batch
+    ? `统一授权 · 最高${riskLabel(payload.risk)}`
+    : `节点 ${payload.nodeId} · ${riskLabel(payload.risk)}`;
+  confirmationInputs.textContent = batch
+    ? formatConfirmationItems(items)
+    : formatInputs(items[0]?.inputs ?? payload.inputs);
+  approveButton.textContent = batch ? "允许全部执行" : "允许执行";
+}
+
+function isBatchConfirmation(payload: ConfirmationRequest) {
+  return Boolean(payload.workflowId) || (payload.items?.length ?? 0) > 1;
+}
+
+function confirmationItems(payload: ConfirmationRequest): ConfirmationItem[] {
+  if (payload.items && payload.items.length > 0) {
+    return payload.items;
+  }
+  return [
+    {
+      nodeId: payload.nodeId,
+      action: payload.action,
+      inputs: payload.inputs,
+      risk: payload.risk,
+    },
+  ];
+}
+
+function formatConfirmationItems(items: ConfirmationItem[]) {
+  if (items.length === 0) {
+    return "(无待确认操作)";
+  }
+  return items
+    .map(
+      (item, index) =>
+        `${index + 1}. ${item.nodeId} · ${item.action} · ${riskLabel(item.risk)}\n${formatInputs(
+          item.inputs,
+        )}`,
+    )
+    .join("\n\n");
+}
+
+function formatInputs(inputs: unknown) {
+  return inputs == null ? "(无输入)" : JSON.stringify(inputs, null, 2);
 }
 
 async function resolveConfirmation(approved: boolean) {

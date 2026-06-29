@@ -368,7 +368,7 @@ pre {
 }
 .confirmation-action { display: block; margin: 18px 0 3px; color: #853f35; font: 0.95rem "SFMono-Regular", Consolas, monospace; }
 .confirmation-meta { margin: 0; color: #75817c; font-size: 0.75rem; }
-.confirmation-dialog pre { color: #4d5d57; border-color: #dce3df; background: #eef2ef; }
+.confirmation-dialog pre { max-height: 38vh; overflow: auto; color: #4d5d57; border-color: #dce3df; background: #eef2ef; }
 .confirmation-dialog summary { color: #4f6d60; }
 .confirmation-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 9px; margin-top: 20px; }
 .confirmation-actions button:disabled { cursor: wait; opacity: 0.55; }

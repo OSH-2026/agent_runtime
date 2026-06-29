@@ -7,10 +7,10 @@ use actions::{
 use async_trait::async_trait;
 use dispatcher::scheduler::{Dispatcher, TopoPolicy};
 use dispatcher::{
-    ActionExecutor, ActionRegistryFactory, ConfirmationHandler, ConfirmationRequest,
-    DispatcherToolExecutor, Engine, ExecutionContext, GlobalState, InMemoryAuditLog,
-    InMemoryStateStore, NodeState, SimpleRecovery, apply_action_metadata,
-    load_action_flow_from_str,
+    ActionExecutor, ActionFlowFile, ActionRegistryFactory, ConfirmationHandler,
+    ConfirmationRequest, DispatcherToolExecutor, Engine, ExecutionContext, ExecutionPlan,
+    GlobalState, InMemoryAuditLog, InMemoryStateStore, NodeState, SimpleRecovery,
+    apply_action_metadata, load_action_flow_from_str,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,7 @@ const DEFAULT_MODEL: &str = "local-model";
 const DEFAULT_GRPC_ENDPOINT: &str = "127.0.0.1:8080";
 const MAX_CHAT_TURNS: u32 = 16;
 const REQUEST_TIMEOUT_MS: u64 = 120_000;
+const WORKFLOW_CONFIRMATION_ACTION: &str = "__workflow_confirmation__";
 
 const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Fabric 助手。
 
@@ -113,6 +114,22 @@ struct TauriConfirmationHandler {
     broker: Arc<ConfirmationBroker>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmationItem {
+    node_id: String,
+    action: String,
+    inputs: Option<Value>,
+    risk: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowConfirmationPayload {
+    workflow_id: String,
+    items: Vec<ConfirmationItem>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfirmationEvent {
@@ -121,11 +138,14 @@ struct ConfirmationEvent {
     action: String,
     inputs: Option<Value>,
     risk: String,
+    workflow_id: Option<String>,
+    items: Vec<ConfirmationItem>,
 }
 
 #[async_trait]
 impl ConfirmationHandler for TauriConfirmationHandler {
     async fn confirm(&self, request: ConfirmationRequest) -> Result<bool, ActionError> {
+        let event_details = confirmation_event_details(request);
         let request_id = format!(
             "confirmation-{}",
             self.broker.next_id.fetch_add(1, Ordering::Relaxed)
@@ -139,10 +159,12 @@ impl ConfirmationHandler for TauriConfirmationHandler {
 
         let event = ConfirmationEvent {
             request_id: request_id.clone(),
-            node_id: request.node_id,
-            action: request.action,
-            inputs: request.inputs,
-            risk: risk_name(request.risk).to_string(),
+            node_id: event_details.node_id,
+            action: event_details.action,
+            inputs: event_details.inputs,
+            risk: event_details.risk,
+            workflow_id: event_details.workflow_id,
+            items: event_details.items,
         };
         if let Err(error) = self.app.emit("confirmation-request", event) {
             if let Ok(mut pending) = self.broker.pending.lock() {
@@ -162,6 +184,55 @@ impl ConfirmationHandler for TauriConfirmationHandler {
                 false,
             )
         })
+    }
+}
+
+struct ConfirmationEventDetails {
+    node_id: String,
+    action: String,
+    inputs: Option<Value>,
+    risk: String,
+    workflow_id: Option<String>,
+    items: Vec<ConfirmationItem>,
+}
+
+fn confirmation_event_details(request: ConfirmationRequest) -> ConfirmationEventDetails {
+    let ConfirmationRequest {
+        node_id,
+        action,
+        inputs,
+        risk,
+    } = request;
+    let risk = risk_name(risk).to_string();
+
+    if action == WORKFLOW_CONFIRMATION_ACTION {
+        if let Some(inputs_value) = inputs.clone() {
+            if let Ok(payload) = serde_json::from_value::<WorkflowConfirmationPayload>(inputs_value)
+            {
+                return ConfirmationEventDetails {
+                    node_id: payload.workflow_id.clone(),
+                    action: "workflow".to_string(),
+                    inputs: None,
+                    risk,
+                    workflow_id: Some(payload.workflow_id),
+                    items: payload.items,
+                };
+            }
+        }
+    }
+
+    ConfirmationEventDetails {
+        node_id: node_id.clone(),
+        action: action.clone(),
+        inputs: inputs.clone(),
+        risk: risk.clone(),
+        workflow_id: None,
+        items: vec![ConfirmationItem {
+            node_id,
+            action,
+            inputs,
+            risk,
+        }],
     }
 }
 
@@ -572,6 +643,7 @@ async fn execute_workflow(
     grpc_endpoint: &str,
     confirmation_handler: Arc<dyn ConfirmationHandler>,
 ) -> WorkflowReport {
+    let step_order = workflow_step_order(&yaml);
     let mut plan = match load_action_flow_from_str(&yaml) {
         Ok(plan) => plan,
         Err(error) => return failed_report("invalid-workflow", error.to_string()),
@@ -611,13 +683,17 @@ async fn execute_workflow(
         plan,
     };
 
-    let run_error = run_with_confirmations(
-        &mut engine,
-        &ExecutionContext::default(),
-        confirmation_handler.as_ref(),
-    )
-    .await
-    .err();
+    let run_error =
+        match authorize_workflow(&mut engine, &step_order, confirmation_handler.as_ref()).await {
+            Ok(()) => run_with_confirmations(
+                &mut engine,
+                &ExecutionContext::default(),
+                confirmation_handler.as_ref(),
+            )
+            .await
+            .err(),
+            Err(error) => Some(error),
+        };
     let node_states = engine
         .state
         .nodes
@@ -661,6 +737,117 @@ async fn execute_workflow(
         executed_outputs,
         diagnostics,
         error: run_error,
+    }
+}
+
+async fn authorize_workflow(
+    engine: &mut Engine,
+    step_order: &[String],
+    confirmation_handler: &dyn ConfirmationHandler,
+) -> Result<(), String> {
+    let requests = workflow_confirmation_requests(&engine.plan, step_order);
+    if requests.is_empty() {
+        return Ok(());
+    }
+
+    let payload = WorkflowConfirmationPayload {
+        workflow_id: engine.plan.id.clone(),
+        items: requests
+            .iter()
+            .map(|request| ConfirmationItem {
+                node_id: request.node_id.clone(),
+                action: request.action.clone(),
+                inputs: request.inputs.clone(),
+                risk: risk_name(request.risk).to_string(),
+            })
+            .collect(),
+    };
+    let approved = confirmation_handler
+        .confirm(ConfirmationRequest {
+            node_id: engine.plan.id.clone(),
+            action: WORKFLOW_CONFIRMATION_ACTION.to_string(),
+            inputs: Some(serde_json::to_value(payload).map_err(|error| error.to_string())?),
+            risk: highest_risk(&requests),
+        })
+        .await
+        .map_err(|error| error.message)?;
+
+    if approved {
+        for request in requests {
+            engine
+                .approve_node(&request.node_id)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    } else {
+        for request in requests {
+            engine
+                .reject_node(&request.node_id)
+                .map_err(|error| error.to_string())?;
+        }
+        Err(format!("用户拒绝执行 workflow '{}'", engine.plan.id))
+    }
+}
+
+fn workflow_confirmation_requests(
+    plan: &ExecutionPlan,
+    step_order: &[String],
+) -> Vec<ConfirmationRequest> {
+    let mut ordered_node_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for node_id in step_order {
+        if plan.nodes.contains_key(node_id) && seen.insert(node_id.clone()) {
+            ordered_node_ids.push(node_id.clone());
+        }
+    }
+    let mut remaining = plan
+        .nodes
+        .keys()
+        .filter(|node_id| !seen.contains(*node_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    remaining.sort();
+    ordered_node_ids.extend(remaining);
+
+    ordered_node_ids
+        .into_iter()
+        .filter_map(|node_id| {
+            let node = plan.nodes.get(&node_id)?;
+            node.config.policy.requires_confirmation.then(|| {
+                let action = node.action.clone();
+                ConfirmationRequest {
+                    node_id,
+                    action: action.clone(),
+                    inputs: node.inputs.clone(),
+                    risk: metadata_for_action(&action)
+                        .map(|metadata| metadata.risk)
+                        .unwrap_or(actions::ActionRisk::High),
+                }
+            })
+        })
+        .collect()
+}
+
+fn workflow_step_order(yaml: &str) -> Vec<String> {
+    serde_yaml::from_str::<ActionFlowFile>(yaml)
+        .map(|flow| flow.steps.into_iter().map(|step| step.id).collect())
+        .unwrap_or_default()
+}
+
+fn highest_risk(requests: &[ConfirmationRequest]) -> actions::ActionRisk {
+    requests
+        .iter()
+        .map(|request| request.risk)
+        .max_by_key(|risk| risk_rank(*risk))
+        .unwrap_or(actions::ActionRisk::High)
+}
+
+fn risk_rank(risk: actions::ActionRisk) -> u8 {
+    match risk {
+        actions::ActionRisk::Low => 0,
+        actions::ActionRisk::Medium => 1,
+        actions::ActionRisk::High => 2,
+        actions::ActionRisk::Critical => 3,
     }
 }
 
@@ -974,6 +1161,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct ApproveAll;
 
@@ -981,6 +1169,29 @@ mod tests {
     impl ConfirmationHandler for ApproveAll {
         async fn confirm(&self, _request: ConfirmationRequest) -> Result<bool, ActionError> {
             Ok(true)
+        }
+    }
+
+    struct RejectAndRecord {
+        count: AtomicUsize,
+        last_request: Mutex<Option<ConfirmationRequest>>,
+    }
+
+    impl RejectAndRecord {
+        fn new() -> Self {
+            Self {
+                count: AtomicUsize::new(0),
+                last_request: Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ConfirmationHandler for RejectAndRecord {
+        async fn confirm(&self, request: ConfirmationRequest) -> Result<bool, ActionError> {
+            self.count.fetch_add(1, AtomicOrdering::Relaxed);
+            *self.last_request.lock().expect("confirmation lock") = Some(request);
+            Ok(false)
         }
     }
 
@@ -1053,7 +1264,10 @@ outputContract: json
             DEFAULT_MODEL_URL,
             "http://10.0.2.2:8080/v1/chat/completions"
         );
-        assert_eq!(normalize_chat_endpoint(DEFAULT_MODEL_URL), DEFAULT_MODEL_URL);
+        assert_eq!(
+            normalize_chat_endpoint(DEFAULT_MODEL_URL),
+            DEFAULT_MODEL_URL
+        );
         assert_eq!(
             normalize_chat_endpoint(" http://10.0.2.2:8080/v1/chat/completions/ "),
             DEFAULT_MODEL_URL
@@ -1141,6 +1355,125 @@ steps:
                 .diagnostics
                 .iter()
                 .any(|entry| entry.message.contains("unknown field `wait_for`"))
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_confirmation_batches_all_confirmable_nodes() {
+        let handler = Arc::new(RejectAndRecord::new());
+        let report = execute_workflow(
+            r#"
+version: 1
+id: set-ten-alarms-630-700
+steps:
+  - id: alarm_1
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 30
+      message: "Alarm 1"
+      skipUi: true
+  - id: alarm_2
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 40
+      message: "Alarm 2"
+      skipUi: true
+  - id: alarm_3
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 50
+      message: "Alarm 3"
+      skipUi: true
+  - id: alarm_4
+    action: set_alarm
+    inputs:
+      hour: 7
+      minutes: 0
+      message: "Alarm 4"
+      skipUi: true
+  - id: alarm_5
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 35
+      message: "Alarm 5"
+      skipUi: true
+  - id: alarm_6
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 45
+      message: "Alarm 6"
+      skipUi: true
+  - id: alarm_7
+    action: set_alarm
+    inputs:
+      hour: 6
+      minutes: 55
+      message: "Alarm 7"
+      skipUi: true
+  - id: alarm_8
+    action: set_alarm
+    inputs:
+      hour: 7
+      minutes: 5
+      message: "Alarm 8"
+      skipUi: true
+  - id: alarm_9
+    action: set_alarm
+    inputs:
+      hour: 7
+      minutes: 15
+      message: "Alarm 9"
+      skipUi: true
+  - id: alarm_10
+    action: set_alarm
+    inputs:
+      hour: 7
+      minutes: 25
+      message: "Alarm 10"
+      skipUi: true
+"#
+            .to_string(),
+            DEFAULT_GRPC_ENDPOINT,
+            handler.clone(),
+        )
+        .await;
+
+        assert!(!report.success);
+        assert_eq!(handler.count.load(AtomicOrdering::Relaxed), 1);
+        assert!(
+            report
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("workflow")
+        );
+        let request = handler
+            .last_request
+            .lock()
+            .expect("confirmation lock")
+            .clone()
+            .expect("confirmation request");
+        assert_eq!(request.action, WORKFLOW_CONFIRMATION_ACTION);
+        assert_eq!(request.node_id, "set-ten-alarms-630-700");
+        assert_eq!(risk_name(request.risk), "medium");
+        let payload: WorkflowConfirmationPayload =
+            serde_json::from_value(request.inputs.expect("workflow payload")).expect("payload");
+        assert_eq!(payload.workflow_id, "set-ten-alarms-630-700");
+        assert_eq!(payload.items.len(), 10);
+        assert_eq!(payload.items[0].node_id, "alarm_1");
+        assert_eq!(payload.items[9].node_id, "alarm_10");
+        assert!(payload.items.iter().all(|item| item.action == "set_alarm"));
+        assert!(payload.items.iter().all(|item| item.risk == "medium"));
+        assert!(
+            report
+                .node_states
+                .values()
+                .all(|state| state == "cancelled")
         );
     }
 
