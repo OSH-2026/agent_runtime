@@ -252,12 +252,17 @@ steps:
       payload: "hello"
 "#;
     let error = executor(full_registry)
-        .validate_workflow_message(yaml, "Done {Missing}")
+        .validate_workflow_message(yaml, "Done ${Missing}")
         .await
         .expect_err("unknown final-message node should be rejected");
 
     assert_eq!(error.code, "FINAL_MESSAGE_TEMPLATE");
     assert!(error.message.contains("unknown node 'Missing'"));
+
+    executor(full_registry)
+        .validate_workflow_message(yaml, "Done {A}")
+        .await
+        .expect("bare braces should be treated as literal text");
 }
 
 #[tokio::test]
@@ -278,7 +283,7 @@ steps:
     let executor = executor(full_registry);
 
     executor
-        .validate_workflow_message(yaml, "Done {A} and {B}")
+        .validate_workflow_message(yaml, "Done ${A} and ${B}")
         .await
         .expect("final template should validate against all nodes");
     let output = executor.execute_yaml(yaml).await.expect("execution failed");

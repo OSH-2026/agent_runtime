@@ -275,9 +275,9 @@ fn validate_final_message_template<'a>(
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
     let mut cursor = 0usize;
-    while let Some(start) = template[cursor..].find('{') {
+    while let Some(start) = template[cursor..].find("${") {
         let start_index = cursor + start;
-        let name_start = start_index + 1;
+        let name_start = start_index + 2;
         let end_index = template[name_start..]
             .find('}')
             .map(|offset| name_start + offset)

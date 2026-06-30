@@ -11,8 +11,8 @@ use std::time::Duration;
 const DEFAULT_SYSTEM_PROMPT: &str = r#"You are a subagent that can call tools by emitting fenced YAML workflows.
 
 Reply in exactly one of these formats:
-1. Plain final answer: if the first non-whitespace characters are not ```, the response is returned as-is. Plain answers do not execute workflows and do not process {node_id} placeholders.
-2. Workflow request: start with a fenced YAML block, then place the final answer template after the closing fence. The final answer template is returned only if the workflow fully executes. Use {node_id} placeholders to insert complete outputs from executed nodes.
+1. Plain final answer: if the first non-whitespace characters are not ```, the response is returned as-is. Plain answers do not execute workflows and do not process ${node_id} placeholders.
+2. Workflow request: start with a fenced YAML block, then place the final answer template after the closing fence. The final answer template is returned only if the workflow fully executes. Use ${node_id} placeholders to insert complete outputs from executed nodes.
 
 Workflow response format:
 ```yaml
@@ -28,7 +28,7 @@ steps:
     inputs:
       text: "${A}"
 ```
-The transformed text is {B}.
+The transformed text is ${B}.
 
 Do not include execution policy fields in workflow YAML; policies are supplied by the trusted action registry.
 Do not include top-level output, outputContract, or per-step outputs fields; the final message template decides what is returned.
@@ -388,10 +388,10 @@ fn render_final_message(
 ) -> Result<String, String> {
     let mut result = String::new();
     let mut cursor = 0usize;
-    while let Some(start) = template[cursor..].find('{') {
+    while let Some(start) = template[cursor..].find("${") {
         let start_index = cursor + start;
         result.push_str(&template[cursor..start_index]);
-        let name_start = start_index + 1;
+        let name_start = start_index + 2;
         let end_index = template[name_start..]
             .find('}')
             .map(|offset| name_start + offset)
@@ -414,8 +414,9 @@ fn render_final_message(
 mod tests {
     use super::{
         SubagentConfig, SubagentInput, build_system_prompt, normalize_chat_endpoint,
-        parse_workflow_message,
+        parse_workflow_message, render_final_message,
     };
+    use std::collections::BTreeMap;
 
     fn config(system_prompt: Option<&str>, action_catalog: &str) -> SubagentConfig {
         SubagentConfig {
@@ -432,11 +433,11 @@ mod tests {
 
     #[test]
     fn parses_workflow_response_only_when_it_starts_with_fence() {
-        let message = parse_workflow_message("```yaml\nversion: 1\nsteps: []\n```\nDone {A}")
+        let message = parse_workflow_message("```yaml\nversion: 1\nsteps: []\n```\nDone ${A}")
             .expect("valid workflow response")
             .expect("workflow expected");
         assert_eq!(message.yaml, "version: 1\nsteps: []");
-        assert_eq!(message.final_message_template, "Done {A}");
+        assert_eq!(message.final_message_template, "Done ${A}");
         assert!(
             parse_workflow_message("version: 1\nsteps: []")
                 .unwrap()
@@ -455,6 +456,27 @@ mod tests {
         )
         .expect_err("configuration fields must be rejected");
         assert!(error.to_string().contains("unknown field `model`"));
+    }
+
+    #[test]
+    fn renders_final_message_with_dollar_placeholders() {
+        let message = render_final_message(
+            "Done ${A} and ${B}",
+            &BTreeMap::from([
+                ("A".to_string(), "left".to_string()),
+                ("B".to_string(), "right".to_string()),
+            ]),
+        )
+        .expect("template should render");
+
+        assert_eq!(message, "Done left and right");
+        assert!(render_final_message("Done ${Missing}", &BTreeMap::new()).is_err());
+        let literal_braces = render_final_message(
+            "Done {A}",
+            &BTreeMap::from([("A".to_string(), "left".to_string())]),
+        )
+        .expect("bare braces should be treated as literal text");
+        assert_eq!(literal_braces, "Done {A}");
     }
 
     #[test]

@@ -48,10 +48,10 @@ yarn tauri android dev
 后端发送系统提示词和可信 action catalog，然后循环：
 
 1. 调用模型。
-2. 回复第一个非空字符不是 ```` ``` ```` 时，作为普通文本直接结束，不执行 workflow，也不处理 `{}`。
+2. 回复第一个非空字符不是 ```` ``` ```` 时，作为普通文本直接结束，不执行 workflow，也不处理 `${...}`。
 3. 回复以 ```` ``` ```` 开头时，抽取 fenced YAML 和 closing fence 后的最终消息模板，YAML 交给 dispatcher 校验、构图和执行。
 4. 高风险 action 通过 Tauri event 请求用户确认。
-5. 成功时渲染最终消息模板中的 `{node_id}`，把渲染结果返回用户并结束。
+5. 成功时渲染最终消息模板中的 `${node_id}`，把渲染结果返回用户并结束。
 6. 失败时把部分执行结果写入 `tool` 消息，回到步骤 1，直到普通文本、成功 workflow 或最大轮次。
 
 界面右侧会实时展示模型轮次、YAML、dispatcher 状态、节点结果和失败诊断。
@@ -68,7 +68,7 @@ steps:
     inputs:
       prompt: "生成自然、可直接展示的摘要，不要添加 Final answer、Answer、Result 等模板前缀。"
 ```
-{final_report}
+${final_report}
 ````
 
 `text` action 只接受 `value` 字段；不要使用额外字段来制造隐式依赖。
