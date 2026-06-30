@@ -280,6 +280,7 @@ impl Action for UppercaseAction {
 
 struct ChatRegistryFactory {
     grpc_client: GrpcClient,
+    model_config: ModelRuntimeConfig,
 }
 
 impl ActionRegistryFactory for ChatRegistryFactory {
@@ -299,16 +300,7 @@ impl ActionRegistryFactory for ChatRegistryFactory {
             "subagent",
             Arc::new(SubagentAction::new(
                 tools,
-                SubagentConfig {
-                    model: DEFAULT_MODEL.to_string(),
-                    base_url: DEFAULT_MODEL_URL.to_string(),
-                    api_key: None,
-                    max_turns: 4,
-                    temperature: 0.2,
-                    request_timeout_ms: 60_000,
-                    system_prompt: None,
-                    action_catalog: action_catalog(),
-                },
+                self.model_config.subagent_config(),
             )),
             required_metadata("subagent").map_err(ActionError::new)?,
         );
@@ -320,6 +312,39 @@ impl ActionRegistryFactory for ChatRegistryFactory {
             );
         }
         Ok(registry)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ModelRuntimeConfig {
+    model: String,
+    base_url: String,
+    api_key: Option<String>,
+    temperature: f32,
+}
+
+impl ModelRuntimeConfig {
+    fn subagent_config(&self) -> SubagentConfig {
+        SubagentConfig {
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            api_key: self.api_key.clone(),
+            max_turns: 4,
+            temperature: self.temperature,
+            request_timeout_ms: 60_000,
+            system_prompt: None,
+            action_catalog: action_catalog(),
+        }
+    }
+}
+
+#[cfg(test)]
+fn default_model_runtime_config() -> ModelRuntimeConfig {
+    ModelRuntimeConfig {
+        model: DEFAULT_MODEL.to_string(),
+        base_url: DEFAULT_MODEL_URL.to_string(),
+        api_key: None,
+        temperature: 0.2,
     }
 }
 
@@ -415,12 +440,22 @@ async fn run_chat_loop(
         return Err("message must not be empty".to_string());
     }
 
-    let config = request.config;
-    let model_url = non_empty(config.model_base_url, DEFAULT_MODEL_URL);
-    let model = non_empty(config.model, DEFAULT_MODEL);
-    let grpc_endpoint = non_empty(config.grpc_endpoint, DEFAULT_GRPC_ENDPOINT);
-    let temperature = config.temperature.unwrap_or(0.2).clamp(0.0, 2.0);
-    let max_turns = config.max_turns.unwrap_or(8).clamp(1, MAX_CHAT_TURNS);
+    let ChatConfig {
+        model_base_url,
+        model,
+        api_key,
+        temperature,
+        max_turns,
+        grpc_endpoint,
+    } = request.config;
+    let model_config = ModelRuntimeConfig {
+        model: non_empty(model, DEFAULT_MODEL),
+        base_url: non_empty(model_base_url, DEFAULT_MODEL_URL),
+        api_key: api_key.filter(|key| !key.trim().is_empty()),
+        temperature: temperature.unwrap_or(0.2).clamp(0.0, 2.0),
+    };
+    let grpc_endpoint = non_empty(grpc_endpoint, DEFAULT_GRPC_ENDPOINT);
+    let max_turns = max_turns.unwrap_or(8).clamp(1, MAX_CHAT_TURNS);
     let confirmation_handler: Arc<dyn ConfirmationHandler> = Arc::new(TauriConfirmationHandler {
         app: app.clone(),
         broker: Arc::clone(confirmation_broker.inner()),
@@ -456,10 +491,10 @@ async fn run_chat_loop(
         emit_status(&app, "thinking", turn, "正在请求模型", None, None);
         let assistant = call_llm(
             &http,
-            &model_url,
-            &model,
-            config.api_key.as_deref(),
-            temperature,
+            &model_config.base_url,
+            &model_config.model,
+            model_config.api_key.as_deref(),
+            model_config.temperature,
             &history,
         )
         .await?;
@@ -526,6 +561,7 @@ async fn run_chat_loop(
         let mut report = execute_workflow(
             workflow_message.yaml,
             &grpc_endpoint,
+            model_config.clone(),
             Arc::clone(&confirmation_handler),
         )
         .await;
@@ -641,6 +677,7 @@ async fn call_llm(
 async fn execute_workflow(
     yaml: String,
     grpc_endpoint: &str,
+    model_config: ModelRuntimeConfig,
     confirmation_handler: Arc<dyn ConfirmationHandler>,
 ) -> WorkflowReport {
     let step_order = workflow_step_order(&yaml);
@@ -660,6 +697,7 @@ async fn execute_workflow(
     let output_node = plan.output_node.clone();
     let factory: Arc<dyn ActionRegistryFactory> = Arc::new(ChatRegistryFactory {
         grpc_client: GrpcClient::new(grpc_endpoint.to_string()),
+        model_config,
     });
     let tools: Arc<dyn ToolExecutor> = Arc::new(DispatcherToolExecutor::with_confirmation_handler(
         Arc::clone(&factory),
@@ -1275,6 +1313,26 @@ outputContract: json
     }
 
     #[test]
+    fn subagent_config_uses_resolved_model_runtime_config() {
+        let config = ModelRuntimeConfig {
+            model: "custom-model".to_string(),
+            base_url: "http://10.0.2.2:8081/v1/chat/completions".to_string(),
+            api_key: Some("secret".to_string()),
+            temperature: 0.7,
+        };
+
+        let subagent = config.subagent_config();
+
+        assert_eq!(subagent.model, "custom-model");
+        assert_eq!(
+            subagent.base_url,
+            "http://10.0.2.2:8081/v1/chat/completions"
+        );
+        assert_eq!(subagent.api_key.as_deref(), Some("secret"));
+        assert_eq!(subagent.temperature, 0.7);
+    }
+
+    #[test]
     fn preflight_rejects_final_message_template_before_execution() {
         let workflow = WorkflowMessage {
             yaml: r#"
@@ -1316,6 +1374,7 @@ steps:
 "#
             .to_string(),
             DEFAULT_GRPC_ENDPOINT,
+            default_model_runtime_config(),
             Arc::new(ApproveAll),
         )
         .await;
@@ -1344,6 +1403,7 @@ steps:
 "#
             .to_string(),
             DEFAULT_GRPC_ENDPOINT,
+            default_model_runtime_config(),
             Arc::new(ApproveAll),
         )
         .await;
@@ -1439,6 +1499,7 @@ steps:
 "#
             .to_string(),
             DEFAULT_GRPC_ENDPOINT,
+            default_model_runtime_config(),
             handler.clone(),
         )
         .await;
