@@ -67,6 +67,24 @@ steps:
 
 ${final_report}
 
+示例：用户问“读取剪贴板内容并告诉我重点。”
+
+```yaml
+version: 1
+id: clipboard-summary
+steps:
+  - id: clip
+    action: clipboard_read
+    inputs:
+      unused: true
+  - id: summary
+    action: subagent
+    inputs:
+      prompt: "用中文总结以下文本的重点；如果文本为空，输出‘没有可总结的文本’。文本：${clip}"
+```
+
+${summary}
+
 规则：
 - 生成 workflow 时，第一个非空字符必须是开头代码围栏 ```。
 - 只使用可信 action catalog 中存在的 action 和输入字段。
@@ -74,7 +92,7 @@ ${final_report}
 - 可并行的只读步骤应写成互不依赖的步骤。
 - 简单成功确认、完成说明和短结果直接写在最终消息模板中，不要交给 subagent。
 - 只有当步骤输出较长、结构化或需要提炼时，才使用 subagent。
-- 给 subagent 的 prompt 只处理已提供的 `${step_id}` 内容，不要复述用户原始任务；例如在需要总结剪贴板内容时，给 subagent 的 prompt 写成“用中文总结以下文本；如果没有文本，输出‘剪贴板为空’。文本：${clip}”，不要写成“查看剪贴板并总结”。
+- 给 subagent 的 prompt 只处理已提供的 `${step_id}` 内容，不要复述用户原始任务或内容来源。
 - 最终回复直接回答用户请求，不暴露 action 名、workflow、JSON、路径、包名或调度细节，除非用户明确要求。"#;
 
 const SUBAGENT_SYSTEM_PROMPT: &str = r#"你是 Action Chat 的结果整理子代理。
@@ -1269,10 +1287,14 @@ outputContract: json
         assert!(CHAT_SYSTEM_PROMPT.contains("closing fence 后"));
         assert!(CHAT_SYSTEM_PROMPT.contains("device-status-summary"));
         assert!(CHAT_SYSTEM_PROMPT.contains("power_status"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("clipboard-summary"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("clipboard_read"));
         assert!(CHAT_SYSTEM_PROMPT.contains("不要交给 subagent"));
         assert!(CHAT_SYSTEM_PROMPT.contains("只处理已提供的 `${step_id}` 内容"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("剪贴板为空"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("不要复述用户原始任务或内容来源"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("没有可总结的文本"));
         assert!(CHAT_SYSTEM_PROMPT.contains("${final_report}"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("${summary}"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("不要生成 policy"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("sideEffect"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("retryBudget"));
