@@ -967,7 +967,7 @@ function setConnection(label: string, state: string) {
 
 function readSettings() {
   return {
-    modelBaseUrl: element<HTMLInputElement>("#model-url").value.trim(),
+    modelEndpoint: element<HTMLInputElement>("#model-endpoint").value,
     model: element<HTMLInputElement>("#model-name").value.trim(),
     apiKey: element<HTMLInputElement>("#api-key").value.trim() || null,
     grpcEndpoint: element<HTMLInputElement>("#grpc-endpoint").value.trim(),
@@ -990,12 +990,16 @@ function restoreSettings() {
     return;
   }
   try {
-    const settings = JSON.parse(raw) as ReturnType<typeof readSettings>;
-    setInput("#model-url", settings.modelBaseUrl);
+    const settings = JSON.parse(raw) as Partial<ReturnType<typeof readSettings>>;
+    setInput("#model-endpoint", settings.modelEndpoint);
     setInput("#model-name", settings.model);
     setInput("#grpc-endpoint", settings.grpcEndpoint);
-    setInput("#temperature", String(settings.temperature));
-    setInput("#max-turns", String(settings.maxTurns));
+    if (settings.temperature != null) {
+      setInput("#temperature", String(settings.temperature));
+    }
+    if (settings.maxTurns != null) {
+      setInput("#max-turns", String(settings.maxTurns));
+    }
   } catch {
     localStorage.removeItem("action-chat-settings");
   }

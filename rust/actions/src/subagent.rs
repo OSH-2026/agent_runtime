@@ -49,7 +49,7 @@ pub struct SubagentInput {
 #[derive(Clone, Debug)]
 pub struct SubagentConfig {
     pub model: String,
-    pub base_url: String,
+    pub endpoint: String,
     pub api_key: Option<String>,
     pub max_turns: u32,
     pub temperature: f32,
@@ -163,10 +163,10 @@ impl SubagentAction {
                 false,
             ));
         }
-        if self.config.model.trim().is_empty() || self.config.base_url.trim().is_empty() {
+        if self.config.model.trim().is_empty() || self.config.endpoint.trim().is_empty() {
             return Err(ActionError::new_with(
                 "INVALID_CONFIG",
-                "subagent model and base_url must not be empty",
+                "subagent model and endpoint must not be empty",
                 false,
             ));
         }
@@ -263,16 +263,18 @@ impl SubagentAction {
     }
 
     async fn call_llm(&self, history: &[ChatMessage]) -> Result<ChatMessage, ActionError> {
-        let endpoint = normalize_chat_endpoint(&self.config.base_url);
-        let mut request = self.http.post(endpoint).json(&ChatRequest {
-            model: self.config.model.clone(),
-            messages: history.to_vec(),
-            temperature: if self.config.temperature > 0.0 {
-                Some(self.config.temperature)
-            } else {
-                None
-            },
-        });
+        let mut request = self
+            .http
+            .post(self.config.endpoint.as_str())
+            .json(&ChatRequest {
+                model: self.config.model.clone(),
+                messages: history.to_vec(),
+                temperature: if self.config.temperature > 0.0 {
+                    Some(self.config.temperature)
+                } else {
+                    None
+                },
+            });
         if let Some(key) = &self.config.api_key {
             if !key.trim().is_empty() {
                 request = request.bearer_auth(key);
@@ -320,17 +322,6 @@ fn build_system_prompt(config: &SubagentConfig) -> String {
     format!(
         "{base}\n\nThe following action catalog is authoritative. Only call actions and use input fields listed here:\n\n{catalog}"
     )
-}
-
-fn normalize_chat_endpoint(base: &str) -> String {
-    let trimmed = base.trim().trim_end_matches('/');
-    if trimmed.ends_with("/v1/chat/completions") {
-        trimmed.to_string()
-    } else if trimmed.ends_with("/v1") {
-        format!("{}/chat/completions", trimmed)
-    } else {
-        format!("{}/v1/chat/completions", trimmed)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -413,15 +404,15 @@ fn render_final_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        SubagentConfig, SubagentInput, build_system_prompt, normalize_chat_endpoint,
-        parse_workflow_message, render_final_message,
+        SubagentConfig, SubagentInput, build_system_prompt, parse_workflow_message,
+        render_final_message,
     };
     use std::collections::BTreeMap;
 
     fn config(system_prompt: Option<&str>, action_catalog: &str) -> SubagentConfig {
         SubagentConfig {
             model: "test-model".to_string(),
-            base_url: "http://localhost:8080".to_string(),
+            endpoint: "http://localhost:8080/v1/chat/completions".to_string(),
             api_key: None,
             max_turns: 2,
             temperature: 0.2,
@@ -477,18 +468,6 @@ mod tests {
         )
         .expect("bare braces should be treated as literal text");
         assert_eq!(literal_braces, "Done {A}");
-    }
-
-    #[test]
-    fn normalize_chat_endpoint_preserves_full_chat_completions_url() {
-        assert_eq!(
-            normalize_chat_endpoint("http://10.0.2.2:8080/v1/chat/completions"),
-            "http://10.0.2.2:8080/v1/chat/completions"
-        );
-        assert_eq!(
-            normalize_chat_endpoint(" http://10.0.2.2:8080/v1/chat/completions/ "),
-            "http://10.0.2.2:8080/v1/chat/completions"
-        );
     }
 
     #[test]

@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 
 const ACTION_CATALOG_DOCUMENT: &str =
     include_str!("../../../../docs/action_fabric/action-catalog-for-llm.md");
-const DEFAULT_MODEL_URL: &str = "http://10.0.2.2:8080/v1/chat/completions";
+const DEFAULT_MODEL_ENDPOINT: &str = "http://10.0.2.2:8080/v1/chat/completions";
 const DEFAULT_MODEL: &str = "local-model";
 const DEFAULT_GRPC_ENDPOINT: &str = "127.0.0.1:8080";
 const MAX_CHAT_TURNS: u32 = 16;
@@ -330,7 +330,7 @@ impl ActionRegistryFactory for ChatRegistryFactory {
 #[derive(Clone, Debug)]
 struct ModelRuntimeConfig {
     model: String,
-    base_url: String,
+    endpoint: String,
     api_key: Option<String>,
     temperature: f32,
 }
@@ -339,7 +339,7 @@ impl ModelRuntimeConfig {
     fn subagent_config(&self) -> SubagentConfig {
         SubagentConfig {
             model: self.model.clone(),
-            base_url: self.base_url.clone(),
+            endpoint: self.endpoint.clone(),
             api_key: self.api_key.clone(),
             max_turns: 4,
             temperature: self.temperature,
@@ -354,7 +354,7 @@ impl ModelRuntimeConfig {
 fn default_model_runtime_config() -> ModelRuntimeConfig {
     ModelRuntimeConfig {
         model: DEFAULT_MODEL.to_string(),
-        base_url: DEFAULT_MODEL_URL.to_string(),
+        endpoint: DEFAULT_MODEL_ENDPOINT.to_string(),
         api_key: None,
         temperature: 0.2,
     }
@@ -371,7 +371,7 @@ struct ChatMessage {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatConfig {
-    model_base_url: Option<String>,
+    model_endpoint: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
     temperature: Option<f32>,
@@ -453,7 +453,7 @@ async fn run_chat_loop(
     }
 
     let ChatConfig {
-        model_base_url,
+        model_endpoint,
         model,
         api_key,
         temperature,
@@ -462,7 +462,7 @@ async fn run_chat_loop(
     } = request.config;
     let model_config = ModelRuntimeConfig {
         model: non_empty(model, DEFAULT_MODEL),
-        base_url: non_empty(model_base_url, DEFAULT_MODEL_URL),
+        endpoint: non_empty(model_endpoint, DEFAULT_MODEL_ENDPOINT),
         api_key: api_key.filter(|key| !key.trim().is_empty()),
         temperature: temperature.unwrap_or(0.2).clamp(0.0, 2.0),
     };
@@ -503,7 +503,7 @@ async fn run_chat_loop(
         emit_status(&app, "thinking", turn, "正在请求模型", None, None);
         let assistant = call_llm(
             &http,
-            &model_config.base_url,
+            &model_config.endpoint,
             &model_config.model,
             model_config.api_key.as_deref(),
             model_config.temperature,
@@ -653,19 +653,17 @@ async fn run_chat_loop(
 
 async fn call_llm(
     http: &Client,
-    base_url: &str,
+    endpoint: &str,
     model: &str,
     api_key: Option<&str>,
     temperature: f32,
     history: &[ChatMessage],
 ) -> Result<ChatMessage, String> {
-    let mut request = http
-        .post(normalize_chat_endpoint(base_url))
-        .json(&LlmRequest {
-            model: model.to_string(),
-            messages: history.to_vec(),
-            temperature,
-        });
+    let mut request = http.post(endpoint).json(&LlmRequest {
+        model: model.to_string(),
+        messages: history.to_vec(),
+        temperature,
+    });
     if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
         request = request.bearer_auth(api_key);
     }
@@ -1142,17 +1140,6 @@ fn render_final_message(
     Ok(result)
 }
 
-fn normalize_chat_endpoint(base: &str) -> String {
-    let trimmed = base.trim().trim_end_matches('/');
-    if trimmed.ends_with("/v1/chat/completions") {
-        trimmed.to_string()
-    } else if trimmed.ends_with("/v1") {
-        format!("{trimmed}/chat/completions")
-    } else {
-        format!("{trimmed}/v1/chat/completions")
-    }
-}
-
 fn non_empty(value: Option<String>, fallback: &str) -> String {
     value
         .filter(|value| !value.trim().is_empty())
@@ -1328,18 +1315,17 @@ outputContract: json
     }
 
     #[test]
-    fn default_model_url_is_chat_completions_endpoint() {
+    fn default_model_endpoint_is_chat_completions_endpoint() {
         assert_eq!(
-            DEFAULT_MODEL_URL,
+            DEFAULT_MODEL_ENDPOINT,
             "http://10.0.2.2:8080/v1/chat/completions"
         );
         assert_eq!(
-            normalize_chat_endpoint(DEFAULT_MODEL_URL),
-            DEFAULT_MODEL_URL
-        );
-        assert_eq!(
-            normalize_chat_endpoint(" http://10.0.2.2:8080/v1/chat/completions/ "),
-            DEFAULT_MODEL_URL
+            non_empty(
+                Some(" http://10.0.2.2:8080/v1/chat/completions/ ".to_string()),
+                DEFAULT_MODEL_ENDPOINT
+            ),
+            " http://10.0.2.2:8080/v1/chat/completions/ "
         );
     }
 
@@ -1347,7 +1333,7 @@ outputContract: json
     fn subagent_config_uses_resolved_model_runtime_config() {
         let config = ModelRuntimeConfig {
             model: "custom-model".to_string(),
-            base_url: "http://10.0.2.2:8081/v1/chat/completions".to_string(),
+            endpoint: "http://10.0.2.2:8081/v1/chat/completions".to_string(),
             api_key: Some("secret".to_string()),
             temperature: 0.7,
         };
@@ -1356,7 +1342,7 @@ outputContract: json
 
         assert_eq!(subagent.model, "custom-model");
         assert_eq!(
-            subagent.base_url,
+            subagent.endpoint,
             "http://10.0.2.2:8081/v1/chat/completions"
         );
         assert_eq!(subagent.api_key.as_deref(), Some("secret"));

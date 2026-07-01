@@ -153,7 +153,7 @@ impl ActionRegistryFactory for TauriRegistryFactory {
                 tools,
                 SubagentConfig {
                     model: "local-model".to_string(),
-                    base_url: "http://10.0.2.2:8080".to_string(),
+                    endpoint: "http://10.0.2.2:8080/v1/chat/completions".to_string(),
                     api_key: None,
                     max_turns: 2,
                     temperature: 0.2,
