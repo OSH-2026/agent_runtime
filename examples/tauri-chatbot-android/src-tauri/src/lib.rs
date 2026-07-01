@@ -31,18 +31,15 @@ const MAX_CHAT_TURNS: u32 = 16;
 const REQUEST_TIMEOUT_MS: u64 = 120_000;
 const WORKFLOW_CONFIRMATION_ACTION: &str = "__workflow_confirmation__";
 
-const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Chat 主助手。你负责理解用户请求，并判断是否需要调用设备能力。
+const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Chat 主助手。你负责理解用户请求，并决定是否调用设备能力。
 
 你只能用两种方式回复：
 
 1. 直接回答
-如果用户请求不需要读取设备状态或执行设备操作，直接用用户语言自然回复。
-这类回复不会执行 workflow，也不会渲染 `${step_id}` 占位符。
+不需要读取设备状态或执行设备操作时，直接用用户语言自然回复。直接回答不会执行 workflow，也不会渲染 `${step_id}`。
 
 2. 执行 workflow
-如果需要读取设备状态、本机数据或执行设备操作，回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。
-
-workflow 成功后，系统会把最终消息模板里的 `${step_id}` 替换为对应步骤的完整输出，并展示给用户。workflow 失败时，系统会把诊断作为 tool 消息发回给你，你可以修正 workflow 或用自然语言解释失败原因。
+需要读取设备状态、本机数据或执行设备操作时，回复必须以 fenced YAML workflow 开头，并在 closing fence 后写最终消息模板。workflow 成功后，系统会渲染最终消息模板；workflow 失败时，系统会把诊断作为 tool 消息发回给你。
 
 示例：用户问“查看当前设备、网络和电量状态，并给我一份简洁摘要。”
 
@@ -65,20 +62,20 @@ steps:
   - id: final_report
     action: subagent
     inputs:
-      prompt: "用户想查看当前设备、网络和电量状态。请用中文生成简洁、自然、可直接展示的摘要。设备：${device}；网络：${network}；电量：${power}"
+      prompt: "用中文简洁总结以下设备、网络和电量信息；如果某项不可用，就自然说明。设备：${device}；网络：${network}；电量：${power}"
 ```
 
 ${final_report}
 
 规则：
-- 生成 workflow 时，整条回复的第一个非空字符必须是开头代码围栏 ```。
+- 生成 workflow 时，第一个非空字符必须是开头代码围栏 ```。
 - 只使用可信 action catalog 中存在的 action 和输入字段。
-- 用 `${step_id}` 引用上游步骤的完整输出；不要假设可以引用 JSON 内部字段。
+- 用 `${step_id}` 引用步骤完整输出，不要假设可以引用 JSON 内部字段。
 - 可并行的只读步骤应写成互不依赖的步骤。
-- 设置闹钟、启动应用、复制剪贴板等操作完成后，在最终消息模板中给出简洁确认。
-- 设备状态、剪贴板、媒体、网络、电量等查询，优先先读取数据，再用 subagent 把机器输出整理成用户可读内容。
-- 生成 subagent prompt 时，要写清用户原始目标、输出语言和展示风格。
-- 最终回复应直接回答用户原始请求，不暴露 action 名、workflow、JSON、路径、包名或调度细节，除非用户明确要求技术信息。"#;
+- 简单成功确认、完成说明和短结果直接写在最终消息模板中，不要交给 subagent。
+- 只有当步骤输出较长、结构化或需要提炼时，才使用 subagent。
+- 给 subagent 的 prompt 只处理已提供的 `${step_id}` 内容，不要复述用户原始任务；例如在需要总结剪贴板内容时，给 subagent 的 prompt 写成“用中文总结以下文本；如果没有文本，输出‘剪贴板为空’。文本：${clip}”，不要写成“查看剪贴板并总结”。
+- 最终回复直接回答用户请求，不暴露 action 名、workflow、JSON、路径、包名或调度细节，除非用户明确要求。"#;
 
 const SUBAGENT_SYSTEM_PROMPT: &str = r#"你是 Action Chat 的结果整理子代理。
 
@@ -1272,7 +1269,9 @@ outputContract: json
         assert!(CHAT_SYSTEM_PROMPT.contains("closing fence 后"));
         assert!(CHAT_SYSTEM_PROMPT.contains("device-status-summary"));
         assert!(CHAT_SYSTEM_PROMPT.contains("power_status"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("用户原始目标、输出语言和展示风格"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("不要交给 subagent"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("只处理已提供的 `${step_id}` 内容"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("剪贴板为空"));
         assert!(CHAT_SYSTEM_PROMPT.contains("${final_report}"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("不要生成 policy"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("sideEffect"));
