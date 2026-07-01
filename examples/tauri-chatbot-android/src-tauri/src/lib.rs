@@ -95,19 +95,19 @@ ${summary}
 - 给 subagent 的 prompt 只处理已提供的 `${step_id}` 内容，不要复述用户原始任务或内容来源。
 - 最终回复直接回答用户请求，不暴露 action 名、workflow、JSON、路径、包名或调度细节，除非用户明确要求。"#;
 
-const SUBAGENT_SYSTEM_PROMPT: &str = r#"你是 Action Chat 的结果整理子代理。
+const SUBAGENT_SYSTEM_PROMPT: &str = r#"你是 ActionFlow workflow 中的 LLM 处理节点。
 
-你的主要任务是把上游 action 输出整理成用户可读的自然语言。默认直接返回 plain final answer；只有当任务确实需要继续读取数据或执行工具时，才生成 workflow。
+你会收到一条 prompt。请按照 prompt 的要求，对其中提供的内容进行转换、提取、总结、判断、改写、分类或生成，并直接返回结果。
 
 你可以用两种方式回复：
 
-1. 直接回答
-直接输出可展示给用户的自然语言内容。
+1. 直接返回结果
+默认使用这种方式。输出可以是 plain text，也可以是 prompt 要求的结构化内容、标签、列表、片段或其他格式。
 
 2. 调用工具
-回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。
+只有当 prompt 明确要求或明确允许调用工具时，才使用这种方式。回复必须以 fenced YAML workflow 开头，并在 closing fence 后写最终消息模板。
 
-格式：
+工具调用基本格式：
 
 ```yaml
 version: 1
@@ -119,15 +119,17 @@ steps:
       field: value
 ```
 
-最终消息模板写在 YAML 代码块之后，可用 `${step_id}` 插入步骤输出。
+输出消息模板写在 YAML 代码块之后，可用 `${step_id}` 插入步骤输出。
 
-规则：
-- 使用上游 prompt 指定的语言；如果没有指定，默认中文。
-- 不要添加 Final answer、Answer、Result、摘要：等模板前缀。
-- 不要输出 JSON、原始字段名、action 名、workflow、路径、包名或调度细节，除非用户明确要求技术信息。
-- 对设备状态、网络、电量、剪贴板、媒体等结果，只提炼对用户有意义的信息。
-- 如果输入为空、权限不足、结果不可用或 action 失败，简洁说明无法完成的原因。
-- 保持简洁、自然、准确；不要编造输入中没有的信息。"#;
+输出规则：
+- 优先遵循 prompt 指定的语言、格式、长度、结构和语气。
+- 如果 prompt 没有指定语言，默认使用中文。
+- 如果 prompt 没有指定格式，返回简洁 plain text。
+- 如果 prompt 要求结构化输出，严格返回指定结构。
+- 直接输出结果正文，不添加额外标题、模板前缀或解释说明，除非 prompt 明确要求。
+- 如果信息不足，返回能够确定的部分，并简洁标明不确定项。
+- 默认不得调用工具。
+- 调用工具时，只使用可信 action catalog 中存在的 action 和输入字段。"#;
 
 #[derive(Default)]
 struct ConfirmationBroker {
@@ -1305,13 +1307,29 @@ outputContract: json
     }
 
     #[test]
-    fn subagent_prompt_teaches_plain_answers_and_workflows() {
-        assert!(SUBAGENT_SYSTEM_PROMPT.contains("结果整理子代理"));
-        assert!(SUBAGENT_SYSTEM_PROMPT.contains("默认直接返回 plain final answer"));
-        assert!(SUBAGENT_SYSTEM_PROMPT.contains("fenced YAML workflow"));
+    fn subagent_prompt_defines_llm_node_contract() {
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("LLM 处理节点"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("按照 prompt 的要求"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("你可以用两种方式回复"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("1. 直接返回结果"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("默认使用这种方式"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("2. 调用工具"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("明确要求或明确允许调用工具"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("工具调用基本格式"));
         assert!(SUBAGENT_SYSTEM_PROMPT.contains("version: 1"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("steps:"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("action: action_name"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("inputs:"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("输出消息模板写在 YAML 代码块之后"));
         assert!(SUBAGENT_SYSTEM_PROMPT.contains("${step_id}"));
-        assert!(SUBAGENT_SYSTEM_PROMPT.contains("不要添加 Final answer"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("如果 prompt 没有指定格式，返回简洁 plain text"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("默认不得调用工具"));
+        assert!(!SUBAGENT_SYSTEM_PROMPT.contains("调用工具或输出 workflow"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("fenced YAML workflow"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("只使用可信 action catalog"));
+        assert!(!SUBAGENT_SYSTEM_PROMPT.contains("上游 action 输出"));
+        assert!(!SUBAGENT_SYSTEM_PROMPT.contains("用户可读的自然语言"));
+        assert!(!SUBAGENT_SYSTEM_PROMPT.contains("只提炼对用户有意义的信息"));
     }
 
     #[test]
