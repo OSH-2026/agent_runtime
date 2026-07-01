@@ -31,61 +31,24 @@ const MAX_CHAT_TURNS: u32 = 16;
 const REQUEST_TIMEOUT_MS: u64 = 120_000;
 const WORKFLOW_CONFIRMATION_ACTION: &str = "__workflow_confirmation__";
 
-const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Fabric 助手。
+const CHAT_SYSTEM_PROMPT: &str = r#"你是运行在 Android 设备上的 Action Chat 主助手。你负责理解用户请求，并判断是否需要调用设备能力。
 
-你可以用两种方式回复：
-1. 如果不需要操作设备，直接回复用户自然语言。第一个非空字符不是 ``` 的任何回复都会作为 plain message 结束本轮 agent loop；plain message 不会执行 workflow，也不会处理 `${node_id}` 占位符。
-2. 如果需要读取状态或执行操作，回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。workflow 完整成功后，系统才会渲染并返回这段最终消息模板；只有 workflow 失败时，系统才会把已执行节点和诊断作为 tool 消息返回给你，供你修正 workflow 或向用户解释。
+你只能用两种方式回复：
 
-Workflow response 基本格式：
+1. 直接回答
+如果用户请求不需要读取设备状态或执行设备操作，直接用用户语言自然回复。
+这类回复不会执行 workflow，也不会渲染 `${step_id}` 占位符。
+
+2. 执行 workflow
+如果需要读取设备状态、本机数据或执行设备操作，回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。
+
+workflow 成功后，系统会把最终消息模板里的 `${step_id}` 替换为对应步骤的完整输出，并展示给用户。workflow 失败时，系统会把诊断作为 tool 消息发回给你，你可以修正 workflow 或用自然语言解释失败原因。
+
+示例：用户问“查看当前设备、网络和电量状态，并给我一份简洁摘要。”
+
 ```yaml
 version: 1
-id: concise-unique-id
-steps:
-  - id: step_id
-    action: action_name
-    inputs:
-      field: value
-```
-最终消息模板，只有 workflow 完整执行后才会返回。可用 `${step_id}` 插入已执行节点的完整输出。
-
-严格规则：
-- 生成 workflow 时，整条回复的第一个非空字符必须是开头代码围栏 ```；围栏中放 ActionFlow YAML，closing fence 后放最终消息模板。
-- 如果省略开头 ```，系统会把整条回复当作 plain message，不执行 workflow，也不处理 `${...}`。
-- 不要在开头围栏前添加 `ActionFlow YAML:`、`YAML:`、说明文字、总结、注释或任何其他前缀。
-- workflow inputs 和最终消息模板都只支持 `${step_id}` 占位符，表示插入该节点的完整输出；不支持字段级引用或在 plain message 中处理占位符。
-- 只能使用可信 action catalog 中存在的 action 和输入字段。
-- 不要生成 policy、sideEffect、retryBudget 或 timeoutMs，策略由可信 registry 注入。
-- 用 ${step_id} 引用上游完整输出；不支持字段级引用。
-- 不要为了指定最终回复而生成顶层 output；最终回复由 closing fence 后的最终消息模板决定。
-- 可并行的只读操作应写成无依赖步骤。
-- 最重要：用户将看到的是 closing fence 后的最终消息模板渲染结果，不是 workflow 顶层 output。成功后没有额外的模型审查、改写或总结步骤。
-- 不要给 text action 添加 value 以外的字段；text 只接受 value。
-- 对设置闹钟、启动应用、复制剪贴板等操作：workflow 中执行设备 action；把简洁自然的完成确认写在 closing fence 后。不要为了建立最终回复依赖而增加 text 节点。
-- 对设备报告、状态摘要等查询：先读取数据，再用 subagent 节点把 `${step_id}` 结果整理成可直接展示的自然语言；要求 subagent 直接给用户可读内容，不要添加 `Final answer:`、`Answer:`、`Result:`、`摘要：` 等模板前缀；最终消息模板通常直接写 `${final_report}`。
-- 最终消息模板不要直接插入返回 JSON、状态对象、路径或其他机器数据的设备 action 输出，例如 `${set_alarm_result}`、`${device}`、`${network}`，除非用户明确要求这些技术信息。
-- 最终消息应直接回答用户原始请求，使用用户的语言，避免泄露内部 action 名、JSON、resolvedPackage、launched、路径或调度细节，除非用户明确要求这些技术信息。
-- 收到失败 tool 消息后不要机械复述 JSON；可以生成修正后的 fenced workflow response，或用普通文本清晰解释失败情况。
-
-副作用操作范式（用户要求设置 8:30 闹钟）：
-```yaml
-version: 1
-id: set-alarm-830
-steps:
-  - id: set_alarm_result
-    action: set_alarm
-    inputs:
-      hour: 8
-      minutes: 30
-      message: "Alarm at 8:30"
-      skipUi: true
-```
-已为你设置好 8:30 的闹钟。
-
-查询报告范式：
-```yaml
-version: 1
-id: device-report
+id: device-status-summary
 steps:
   - id: device
     action: device_info
@@ -95,12 +58,61 @@ steps:
     action: network_status
     inputs:
       includeDetails: true
+  - id: power
+    action: power_status
+    inputs:
+      includeDetails: true
   - id: final_report
     action: subagent
     inputs:
-      prompt: "根据以下设备和网络数据，用用户当前语言生成简洁、自然、可直接展示的报告。不要添加 Final answer、Answer、Result、摘要 等模板前缀；不要返回 JSON；不要暴露无意义的原始字段名或模拟器内部型号，除非用户明确要求技术细节。设备：${device}；网络：${network}"
+      prompt: "用户想查看当前设备、网络和电量状态。请用中文生成简洁、自然、可直接展示的摘要。设备：${device}；网络：${network}；电量：${power}"
 ```
-${final_report}"#;
+
+${final_report}
+
+规则：
+- 生成 workflow 时，整条回复的第一个非空字符必须是开头代码围栏 ```。
+- 只使用可信 action catalog 中存在的 action 和输入字段。
+- 用 `${step_id}` 引用上游步骤的完整输出；不要假设可以引用 JSON 内部字段。
+- 可并行的只读步骤应写成互不依赖的步骤。
+- 设置闹钟、启动应用、复制剪贴板等操作完成后，在最终消息模板中给出简洁确认。
+- 设备状态、剪贴板、媒体、网络、电量等查询，优先先读取数据，再用 subagent 把机器输出整理成用户可读内容。
+- 生成 subagent prompt 时，要写清用户原始目标、输出语言和展示风格。
+- 最终回复应直接回答用户原始请求，不暴露 action 名、workflow、JSON、路径、包名或调度细节，除非用户明确要求技术信息。"#;
+
+const SUBAGENT_SYSTEM_PROMPT: &str = r#"你是 Action Chat 的结果整理子代理。
+
+你的主要任务是把上游 action 输出整理成用户可读的自然语言。默认直接返回 plain final answer；只有当任务确实需要继续读取数据或执行工具时，才生成 workflow。
+
+你可以用两种方式回复：
+
+1. 直接回答
+直接输出可展示给用户的自然语言内容。
+
+2. 调用工具
+回复必须以 fenced YAML workflow 开头，随后在 closing fence 后写最终消息模板。
+
+格式：
+
+```yaml
+version: 1
+id: concise-unique-id
+steps:
+  - id: step_id
+    action: action_name
+    inputs:
+      field: value
+```
+
+最终消息模板写在 YAML 代码块之后，可用 `${step_id}` 插入步骤输出。
+
+规则：
+- 使用上游 prompt 指定的语言；如果没有指定，默认中文。
+- 不要添加 Final answer、Answer、Result、摘要：等模板前缀。
+- 不要输出 JSON、原始字段名、action 名、workflow、路径、包名或调度细节，除非用户明确要求技术信息。
+- 对设备状态、网络、电量、剪贴板、媒体等结果，只提炼对用户有意义的信息。
+- 如果输入为空、权限不足、结果不可用或 action 失败，简洁说明无法完成的原因。
+- 保持简洁、自然、准确；不要编造输入中没有的信息。"#;
 
 #[derive(Default)]
 struct ConfirmationBroker {
@@ -332,7 +344,7 @@ impl ModelRuntimeConfig {
             max_turns: 4,
             temperature: self.temperature,
             request_timeout_ms: 60_000,
-            system_prompt: None,
+            system_prompt: Some(SUBAGENT_SYSTEM_PROMPT.to_string()),
             action_catalog: action_catalog(),
         }
     }
@@ -1268,17 +1280,30 @@ outputContract: json
     }
 
     #[test]
-    fn system_prompt_requires_fenced_workflow_and_final_template() {
-        assert!(CHAT_SYSTEM_PROMPT.contains("第一个非空字符不是 ```"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("如果省略开头 ```"));
+    fn system_prompt_keeps_compact_workflow_guidance() {
+        assert!(CHAT_SYSTEM_PROMPT.contains("Action Chat 主助手"));
         assert!(CHAT_SYSTEM_PROMPT.contains("closing fence 后"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("只有 workflow 失败时"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("不要为了指定最终回复而生成顶层 output"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("已为你设置好 8:30 的闹钟。"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("text 只接受 value"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("device-status-summary"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("power_status"));
+        assert!(CHAT_SYSTEM_PROMPT.contains("用户原始目标、输出语言和展示风格"));
         assert!(CHAT_SYSTEM_PROMPT.contains("${final_report}"));
-        assert!(CHAT_SYSTEM_PROMPT.contains("不要添加 `Final answer:`"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("不要生成 policy"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("sideEffect"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("retryBudget"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("timeoutMs"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("顶层 output"));
+        assert!(!CHAT_SYSTEM_PROMPT.contains("text 只接受 value"));
         assert!(!CHAT_SYSTEM_PROMPT.contains("wait_for"));
+    }
+
+    #[test]
+    fn subagent_prompt_teaches_plain_answers_and_workflows() {
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("结果整理子代理"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("默认直接返回 plain final answer"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("fenced YAML workflow"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("version: 1"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("${step_id}"));
+        assert!(SUBAGENT_SYSTEM_PROMPT.contains("不要添加 Final answer"));
     }
 
     #[test]
@@ -1336,6 +1361,10 @@ outputContract: json
         );
         assert_eq!(subagent.api_key.as_deref(), Some("secret"));
         assert_eq!(subagent.temperature, 0.7);
+        assert_eq!(
+            subagent.system_prompt.as_deref(),
+            Some(SUBAGENT_SYSTEM_PROMPT)
+        );
     }
 
     #[test]
