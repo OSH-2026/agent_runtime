@@ -1,4 +1,4 @@
-# OSH-26 Agent Runtime
+# Agent Runtime
 
 本项目为中国科学技术大学 OSH-2026 课程大作业，面向 Android 端侧智能体构建一套可本地部署、可结构化执行、可观测且可扩展的 Agent Runtime。
 
