@@ -7,9 +7,9 @@
 1. **Action Fabric**：负责将工具调用组织为显式 DAG，并在 Android 设备上完成调度、执行、状态管理、错误恢复与审计。
 2. **端侧 LLM 推理框架**：负责在 Android 本地完成模型加载和推理，通过 Vulkan、KV Cache、量化等技术提升端侧推理效率。
 
-两条技术线共同构成“本地模型负责规划与生成，Action Fabric 负责可靠执行”的端侧 Agent Runtime 技术栈。当前仓库包含 Action Fabric 的完整工程实现；端侧 LLM 推理框架位于独立仓库。
+两条技术线共同构成“本地模型负责规划与生成，Action Fabric 负责可靠执行”的端侧 Agent Runtime 技术栈。当前仓库包含 Action Fabric 的完整工程实现、Android Action Runtime、Workflow App、Agent App、benchmark 与最终材料；端侧 LLM 推理框架位于独立仓库。
 
-> 端侧 LLM 仓库：[项目仓库链接](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
+> 端侧 LLM 仓库：[SiriusPaul/agent-runtime-vllm-engine](https://github.com/SiriusPaul/agent-runtime-vllm-engine)
 
 ## 技术定位与核心竞争力
 
@@ -38,7 +38,7 @@ Action Fabric 将传统 Agent Loop 中隐含于上下文的执行过程显式表
 
 ```mermaid
 flowchart TD
-    workflow["ActionFlow YAML"]
+    workflow["Workflow YAML"]
     loader["Rust Loader<br/>DAG 校验与依赖构建"]
     dispatcher["Dispatcher<br/>Ready Set / Policy / Side-effect Control"]
     executor["Action Executor<br/>Local Action / gRPC Remote Action"]
@@ -50,7 +50,7 @@ flowchart TD
 
 #### Rust 调度内核
 
-- 实现 ActionFlow YAML loader，根据 `${node}` 数据引用自动建立 DAG 依赖。
+- 实现 Workflow YAML loader，根据 `${node}` 数据引用自动建立 DAG 依赖。
 - 实现重复节点、缺失引用、自环与循环依赖检测。
 - 实现节点状态机、前驱依赖检查、Ready Set 计算和拓扑调度。
 - 支持无依赖节点的批量异步执行，并对非幂等 Action 施加串行约束。
@@ -58,7 +58,7 @@ flowchart TD
 - 实现有界恢复机制，根据重试预算和副作用等级执行 Retry，并将 Patch / Replan 作为诊断升级信号交给上层模型循环处理。
 - 实现执行输出解析和节点间结果传递。
 - 实现内存状态存储、审计日志和诊断上下文，能够完整记录节点状态迁移。
-- 提供 Subagent Action 与 Dispatcher Tool Executor，已用于 SubagentAction 和 Chatbot 后端执行模型生成的 Workflow。
+- 提供 Subagent Action 与 Dispatcher Tool Executor，已用于 SubagentAction 和 Agent App 后端执行模型生成的 Workflow。
 
 #### Rust-Kotlin 跨语言执行链
 
@@ -90,7 +90,7 @@ Android Runtime 以前台服务形式运行 gRPC Server，并配套实现权限�
 
 项目提供了面向最终演示的 Tauri 2 Android 应用：
 
-- 在移动端界面直接编辑 ActionFlow YAML。
+- 在移动端界面直接编辑 Workflow YAML。
 - 自动解析 DAG 并由 Rust Dispatcher 调度。
 - 本地支持 `text`、`uppercase`、`subagent`，其余 action 通过可配置的 gRPC endpoint 调用同机或局域网内的 Kotlin Action Runtime。
 - 展示各节点执行状态、输出结果、审计轨迹和诊断信息。
@@ -109,30 +109,30 @@ flowchart TD
     input --> dispatch --> grpc --> android --> output
 ```
 
-#### Tauri Chatbot Android App
+#### Tauri Agent App
 
-在 Workflow App 之外，项目进一步实现了 `examples/tauri-chatbot-android`，作为最终形态的 Android Agent 应用原型。该应用将模型对话、Workflow 生成、DAG 执行和结果渲染整合在同一交互入口中：
+在 Workflow App 之外，项目进一步实现了 Agent App（工程目录为 `examples/tauri-chatbot-android`），作为最终形态的 Android Agent 应用原型。该应用将模型对话、Workflow 生成、DAG 执行和结果渲染整合在同一交互入口中：
 
 - 用户以自然语言发起任务，后端向兼容 OpenAI `/v1/chat/completions` 的端侧模型服务发送系统提示词和可信 action catalog。
 - 模型可以直接返回普通文本，也可以返回以 fenced YAML 开头的 workflow response。
-- 当回复以 Workflow 开头时，Rust 后端抽取 ActionFlow YAML，调用 `rust/dispatcher` 完成校验、构图、调度与执行。
+- 当回复以 Workflow 开头时，Rust 后端抽取 Workflow YAML，调用 `rust/dispatcher` 完成校验、构图、调度与执行。
 - Workflow 成功时，系统直接渲染 closing fence 后的最终消息模板，不再调用模型进行二次审查或总结。
 - Workflow 失败、用户拒绝或节点异常时，系统将节点状态、已执行结果和诊断信息作为 tool message 反馈给模型，进入有限轮次修正。
-- 需要确认或高风险的节点在执行前由 Chatbot App 聚合为批量确认；可信 action metadata 不暴露给模型，避免模型自行伪造策略字段。
+- 需要确认或高风险的节点在执行前由 Agent App 聚合为批量确认；可信 action metadata 不暴露给模型，避免模型自行伪造策略字段。
 
 该应用展示了“模型生成结构化计划、Action Fabric 可靠执行、成功路径自动推进、异常路径有限回退模型”的完整 Agent Loop 改造方案，是项目面向最终用户的主要演示入口。
 
-实机运行截图如下，展示了 Chatbot App 生成并执行设备、网络和电量状态查询 Workflow 后的结果：
+实机运行截图如下，展示了 Agent App 生成并执行设备、网络和电量状态查询 Workflow 后的结果：
 
 <p align="center">
-  <img src="docs/assets/chatbot-app-device-summary.png" alt="Tauri Chatbot Android App 实机截图：设备、网络和电量状态摘要" width="360" />
+  <img src="docs/assets/agent-app-device-summary.png" alt="Agent App 实机截图：设备、网络和电量状态摘要" width="360" />
 </p>
 
 ### 端侧 LLM：Android 本地推理框架
 
-端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。完整端侧 LLM 工程位于独立仓库，本仓库保留相关实验资料、脚本、接口对接验证和成果说明。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与 KV Cache 机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
+端侧 LLM 技术线已完成面向 Android 的本地大语言模型推理系统。完整工程位于独立仓库 [SiriusPaul/agent-runtime-vllm-engine](https://github.com/SiriusPaul/agent-runtime-vllm-engine)，本仓库保留接口对接说明、最终展示材料和成果概述。系统基于 `llama.cpp` 与 GGUF 模型格式，重写了计算后端与 KV Cache 机制，建立了模型加载、推理执行、结果采样和接口调用的完整链路，并已适配 Android Studio、Android 模拟器及 Android 真机。
 
-系统支持 Qwen3-0.6B, Qwen3-1.7B 等小规模语言模型在移动端完全本地运行，同时提供兼容 OpenAI API 的调用接口，可供上层应用或 Agent 系统直接接入。
+系统支持 Qwen3-0.6B、Qwen3-1.7B 等小规模语言模型在移动端完全本地运行，同时提供兼容 OpenAI API 的调用接口，可供上层应用或 Agent 系统直接接入。
 
 #### GPU 推理与长上下文优化
 
@@ -167,8 +167,8 @@ flowchart TB
 
     subgraph app["应用层"]
         direction LR
-        workflow_app["Tauri Workflow App<br/>手动编辑 ActionFlow YAML"]
-        chatbot_app["Tauri Chatbot App<br/>聊天入口 / 失败修正闭环"]
+        workflow_app["Tauri Workflow App<br/>手动编辑 Workflow YAML"]
+        agent_app["Tauri Agent App<br/>聊天入口 / 失败修正闭环"]
     end
 
     subgraph planning["规划层"]
@@ -182,7 +182,7 @@ flowchart TB
     response{"模型回复类型"}
     text_response["普通文本回复"]
     workflow_response["fenced YAML workflow response<br/>YAML + closing fence 后的最终消息模板"]
-    workflow["ActionFlow YAML"]
+    workflow["Workflow YAML"]
 
     subgraph plan["计划层"]
         direction TB
@@ -215,12 +215,12 @@ flowchart TB
     end
 
     user --> workflow_app
-    user --> chatbot_app
+    user --> agent_app
     workflow_app --> workflow
-    chatbot_app -- "system + history + user + catalog schema" --> model_api
-    catalog -- "action schema" --> chatbot_app
+    agent_app -- "system + history + user + catalog schema" --> model_api
+    catalog -- "action schema" --> agent_app
     model_runtime --> response
-    response --> text_response --> chatbot_app
+    response --> text_response --> agent_app
     response --> workflow_response --> workflow
     catalog -- "trusted metadata" --> metadata
     workflow --> metadata --> loader --> engine
@@ -231,11 +231,11 @@ flowchart TB
     remote_action -- "ExecutionResult" --> executor
     confirmation -- "逐节点确认" --> workflow_app
     workflow_app -- "approve / reject" --> confirmation
-    confirmation -- "高风险批量确认" --> chatbot_app
-    chatbot_app -- "approve / reject" --> confirmation
+    confirmation -- "高风险批量确认" --> agent_app
+    agent_app -- "approve / reject" --> confirmation
     state -- "成功：展示节点结果" --> workflow_app
-    state -- "成功：渲染最终消息模板" --> chatbot_app
-    state -- "失败：tool message 反馈给模型修正" --> chatbot_app
+    state -- "成功：渲染最终消息模板" --> agent_app
+    state -- "失败：tool message 反馈给模型修正" --> agent_app
 ```
 
 端侧模型可以负责意图理解、任务拆解和 Workflow 生成；Action Fabric 接收结构化计划后执行静态校验、并发调度、策略控制和工具调用。该分工避免让语言模型直接承担底层执行控制，使推理与执行能够独立优化、测试和演进。
@@ -283,7 +283,7 @@ agent_runtime/
 │   ├── android-action-runtime/     # Kotlin Runtime 真机冒烟测试应用
 │   ├── dispatcher_demo/            # 早期 Rust DAG 调度示例
 │   ├── tauri-workflow-android/     # Workflow 编辑与执行 Android App
-│   └── tauri-chatbot-android/      # 可循环执行 Workflow 的 Chatbot Android App
+│   └── tauri-chatbot-android/      # Agent App：自然语言入口与失败修正闭环
 ├── kotlin/
 │   └── kotlin-actions-runtime/     # Android Action Runtime 核心库
 ├── rust/
@@ -366,7 +366,7 @@ yarn tauri dev
 127.0.0.1:8080
 ```
 
-### Tauri Chatbot App
+### Tauri Agent App
 
 ```bash
 cd examples/tauri-chatbot-android
@@ -384,20 +384,20 @@ yarn tauri android dev
 
 | 模块 | 完成情况 |
 | --- | --- |
-| ActionFlow YAML 与 DAG 构建 | 已完成 |
+| Workflow YAML 与 DAG 构建 | 已完成 |
 | DAG 校验、Ready Set 与并发调度 | 已完成 |
 | 状态机、策略、恢复和审计 | 已完成 |
 | Rust-Kotlin gRPC 执行桥 | 已完成 |
 | Android Action Runtime 与 59 个 Action | 已完成 |
 | Android Smoke Test App | 已完成 |
 | Tauri Workflow Android App | 已完成并产出 ARM64 APK |
-| Tauri Chatbot Android App | 已完成，可循环执行 Workflow 并展示失败修正 |
+| Tauri Agent App | 已完成，可循环执行 Workflow 并展示失败修正 |
 | Action Graph vs Agent Loop benchmark | 已完成，包含原始数据、汇总表和分析报告 |
-| Android 端侧 LLM 基础推理链（独立仓库） | 已完成，本仓库保留实验资料与接口对接说明 |
+| Android 端侧 LLM 基础推理链（独立仓库） | 已完成，本仓库保留接口对接说明与最终材料 |
 | Vulkan GPU 推理优化（独立仓库） | 已完成 |
 | KV Cache、Prefix Cache 与 8K 上下文（独立仓库） | 已完成 |
 | Q8_0 量化推理（独立仓库） | 已完成 |
-| Action Fabric 与端侧 LLM 的产品级整合 | 已完成 OpenAI-compatible 接口对接验证，Chatbot App 可接入端侧模型服务生成并执行 Workflow |
+| Action Fabric 与端侧 LLM 接口对接验证 | 已完成 OpenAI-compatible 接口对接验证，Agent App 可接入端侧模型服务生成并执行 Workflow |
 
 ## 会议记录
 
@@ -410,17 +410,17 @@ yarn tauri android dev
 | 3 | 2026-03-25 | 根据指导意见收敛至 Android 端侧部署与可复现执行路径，确立以公开 Android API 和可真机验收为工程边界。 |
 | 4 | 2026-04-10 | 建立双线并行架构：端侧 LLM 组负责本地推理、缓存与性能优化；Action Fabric 组负责结构化工具抽象、调度和 Android 执行。 |
 | 5 | 2026-04-15 | 确定以 Action DAG 替代隐式 Agent Loop 执行路径，采用 Rust Dispatcher、Kotlin Runtime 和跨语言 RPC 的总体方案。 |
-| 6 | 2026-05-06 | 完成 Dispatcher 基础闭环、ActionFlow YAML loader、恢复机制和本地调度示例；Android Runtime 与首版工具能力进入可运行状态。 |
+| 6 | 2026-05-06 | 完成 Dispatcher 基础闭环、Workflow YAML loader、恢复机制和本地调度示例；Android Runtime 与首版工具能力进入可运行状态。 |
 | 7 | 2026-05-18 | 完成 Android Intent Action、后台 Action、权限协调、执行审计及 Smoke Test UI，形成模拟器与真机验证流程。 |
 | 8 | 2026-05-25 | 完成 Action Policy、风险等级和 Rust gRPC Client，明确工具副作用、确认门控与远程执行策略。 |
 | 9 | 2026-06-03 | 打通 Rust-Kotlin gRPC Remote Action、节点输入引用解析和 Subagent 执行接口，Action Fabric 形成端到端执行链。 |
 | 10 | 2026-06-07 | 端侧 LLM 技术线完成 KV Cache、GPU 推理、量化和性能测试阶段成果整理，双线核心功能均达到展示要求。 |
 | 11 | 2026-06-10 | 完成 Tauri Workflow Android App、真实 Kotlin 工具节点转发与 ARM64 APK 构建，形成可交互的最终演示入口。 |
-| 12 | 2026-06-29 | 完成 Action Chat Android 应用、Action Graph vs Agent Loop benchmark、性能结果汇总和最终展示文档整理。 |
+| 12 | 2026-06-29 | 完成 Agent App、Action Graph vs Agent Loop benchmark、性能结果汇总和最终展示文档整理。 |
 
 ## 后续工作
 
-项目核心技术链路、移动端执行入口、端侧模型对接和性能评测已经完成。后续工作主要集中在补充文件化 Trace Store、增加字段级输出引用与局部数据投影、扩展更多 Android 系统能力，并完善端侧模型自动生成 Workflow 后的长任务联合评测。
+项目核心技术链路、移动端执行入口、端侧模型对接和性能评测已经完成。后续工作主要集中在补充文件化 Trace Store、增加字段级输出引用与局部数据投影，并扩展更多 Android 系统能力。
 
 ## 许可证
 
